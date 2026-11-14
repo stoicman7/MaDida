@@ -67,17 +67,15 @@ internal object LocalVoiceMatcher {
 
         for (contact in contacts) {
             val samplePaths = contact.samplePaths.filter { it.isNotBlank() }.distinct()
-            if (samplePaths.isEmpty()) {
-                return ContactDecision(status = "need_enrollment")
-            }
+            // A contact that has not been enrolled yet, or whose recordings are missing,
+            // must not block the other enrolled contacts from being compared.
+            if (samplePaths.isEmpty()) continue
 
             val distances = samplePaths.mapNotNull { path ->
                 getFeatures(File(path))?.let { reference -> dtwDistance(query, reference) }
             }.filter { it.isFinite() }.sorted()
 
-            if (distances.isEmpty()) {
-                return ContactDecision(status = "need_enrollment")
-            }
+            if (distances.isEmpty()) continue
 
             scores.add(contact to averageBest(distances))
         }
