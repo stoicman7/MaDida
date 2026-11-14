@@ -486,6 +486,7 @@ class MainActivity : ComponentActivity() {
                     status = when (decision.status) {
                         "need_enrollment" -> "Ajoutez d'abord un contact dans les réglages famille."
                         "need_calibration" -> "Enregistrez au moins trois prononciations valides pour chacun des contacts."
+                        "need_rejection_calibration" -> "Enregistrez au moins trois sons qui ne correspondent à aucun contact dans les réglages famille."
                         "unknown_sound" -> "Aucun contact ne correspond suffisamment à ce son. Répétez le nom."
                         else -> "Je n'ai pas pu comparer les prononciations. Réessayez."
                     }
@@ -875,7 +876,11 @@ private fun SetupScreen(
                     rejectedSamples.forEachIndexed { index, audioPath ->
                         AudioSampleRow(
                             label = "Son à rejeter ${index + 1}",
-                            onDelete = { onDeleteRejectedSample(audioPath) },
+                            onDelete = {
+                                audioToDelete = PendingAudioDeletion("le son à rejeter ${index + 1}") {
+                                    onDeleteRejectedSample(audioPath)
+                                }
+                            },
                             enabled = !recording
                         )
                     }
