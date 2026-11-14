@@ -48,7 +48,9 @@ internal object LocalVoiceMatcher {
         val status: String,
         val bestDistance: Double? = null,
         val margin: Double? = null,
-        val bestCandidate: FamilyContact? = null
+        val bestCandidate: FamilyContact? = null,
+        val negativeDistance: Double? = null,
+        val rejectionLimit: Double? = null
     )
 
     private data class ContactScore(
@@ -57,13 +59,40 @@ internal object LocalVoiceMatcher {
         val rejectionLimit: Double
     )
 
-    fun identify(audioFile: File, contacts: List<FamilyContact>): ContactDecision {
+    fun identify(
+        audioFile: File,
+        contacts: List<FamilyContact>,
+        rejectedSamplePaths: List<String>
+    ): ContactDecision {
         val query = getFeatures(audioFile)
             ?: return ContactDecision(status = "audio_invalid")
 
         if (contacts.isEmpty()) {
             return ContactDecision(status = "need_enrollment")
         }
+
+        // A positive-only database cannot reliably distinguish a valid name from
+        // an unrelated utterance that happens to be acoustically close.
+        val rejectedReferences = rejectedSamplePaths
+            .filter { it.isNotBlank() }
+            .distinct()
+            .map(::File)
+            .mapNotNull(::getFeatures)
+        if (rejectedReferences.size < 3) {
+            return ContactDecision(status = "need_rejection_calibration")
+        }
+
+        val negativeDistances = rejectedReferences
+            .map { reference -> dtwDistance(query, reference) }
+            .filter { it.isFinite() }
+            .sorted()
+        if (negativeDistances.size < 3) {
+            return ContactDecision(status = "need_rejection_calibration")
+        }
+        val negativeDistance = averageBest(
+            negativeDistances,
+            min(MAX_REFERENCES_PER_DECISION, negativeDistances.size)
+        )
 
         val scores = mutableListOf<ContactScore>()
 
@@ -132,12 +161,19 @@ internal object LocalVoiceMatcher {
 
         // Reject sounds that are outside the natural variability of every enrolled
         // example for the closest contact. A valid nearest contact is still selected.
-        if (best.distance > best.rejectionLimit) {
+        // Require the query to be clearly closer to a saved contact than to
+        // the recorded non-contact examples. The 15% gap is a conservative
+        // initial margin; it must be validated with the real speaker's audios.
+        if (best.distance > best.rejectionLimit ||
+            negativeDistance <= best.distance * 1.15
+        ) {
             return ContactDecision(
                 status = "unknown_sound",
                 bestDistance = best.distance,
                 margin = margin,
-                bestCandidate = best.contact
+                bestCandidate = best.contact,
+                negativeDistance = negativeDistance,
+                rejectionLimit = best.rejectionLimit
             )
         }
 
@@ -146,7 +182,9 @@ internal object LocalVoiceMatcher {
             status = "match",
             bestDistance = best.distance,
             margin = margin,
-            bestCandidate = best.contact
+            bestCandidate = best.contact,
+            negativeDistance = negativeDistance,
+            rejectionLimit = best.rejectionLimit
         )
     }
 
