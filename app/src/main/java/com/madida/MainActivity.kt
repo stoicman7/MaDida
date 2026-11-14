@@ -546,19 +546,6 @@ private fun SetupScreen(
             }
             Text("Cet écran est destiné à la famille. La grand-mère n'a pas besoin de le consulter.", color = Color.DarkGray, fontSize = 13.sp)
         }
-        if (recording) {
-            item {
-                Button(
-                    onClick = onStopRecording,
-                    modifier = Modifier.fillMaxWidth().height(62.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = DeepRed)
-                ) {
-                    Icon(Icons.Default.Stop, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("ARRÊTER L'ENREGISTREMENT", fontWeight = FontWeight.Bold)
-                }
-            }
-        }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -577,10 +564,15 @@ private fun SetupScreen(
         item {
             Text("Enregistrer les prononciations", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
             Text("Enregistrez au moins une prononciation de chaque contact pour que MaDida puisse les comparer tous. 5 à 8 prononciations par contact sont recommandées.", color = Color.DarkGray, fontSize = 13.sp)
-            OutlinedButton(onClick = onTestRecognition, modifier = Modifier.fillMaxWidth(), enabled = !recording && contacts.isNotEmpty() && contacts.all { it.samplePaths.isNotEmpty() }) {
-                Icon(Icons.Default.Mic, contentDescription = null)
+            val testingNow = recording && recordingTask == RecordingTask.TEST_NAME
+            OutlinedButton(
+                onClick = { if (testingNow) onStopRecording() else onTestRecognition() },
+                modifier = Modifier.fillMaxWidth(),
+                enabled = !recording || testingNow && contacts.isNotEmpty() && contacts.all { it.samplePaths.isNotEmpty() }
+            ) {
+                Icon(if (testingNow) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Tester la reconnaissance (sans appeler)")
+                Text(if (testingNow) "Arrêter le test" else "Tester la reconnaissance (sans appeler)")
             }
         }
         items(contacts, key = { it.id }) { contact ->
@@ -594,16 +586,30 @@ private fun SetupScreen(
                     Text(contact.displayName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text(contact.phoneNumber, color = Color.DarkGray, fontSize = 13.sp)
                     Text("Exemples enregistrés : ${contact.samplePaths.size}", color = Color.DarkGray, fontSize = 13.sp)
-                    OutlinedButton(onClick = { onRecordSample(contact.id) }, modifier = Modifier.fillMaxWidth(), enabled = !recording) {
-                        Icon(Icons.Default.Mic, contentDescription = null)
+                    val recordingSample = recording &&
+                        recordingTask == RecordingTask.ENROLLMENT &&
+                        selectedContactId == contact.id
+                    OutlinedButton(
+                        onClick = { if (recordingSample) onStopRecording() else onRecordSample(contact.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !recording || recordingSample
+                    ) {
+                        Icon(if (recordingSample) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Ajouter une prononciation")
+                        Text(if (recordingSample) "Arrêter" else "Ajouter une prononciation")
                     }
                     Text(if (contact.announcementPath != null) "Nom à annoncer : enregistré" else "Nom à annoncer : non enregistré", color = Color.DarkGray, fontSize = 12.sp)
-                    OutlinedButton(onClick = { onRecordAnnouncement(contact.id) }, modifier = Modifier.fillMaxWidth(), enabled = !recording) {
-                        Icon(Icons.Default.Call, contentDescription = null)
+                    val recordingAnnouncement = recording &&
+                        recordingTask == RecordingTask.CONTACT_LABEL &&
+                        selectedContactId == contact.id
+                    OutlinedButton(
+                        onClick = { if (recordingAnnouncement) onStopRecording() else onRecordAnnouncement(contact.id) },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !recording || recordingAnnouncement
+                    ) {
+                        Icon(if (recordingAnnouncement) Icons.Default.Stop else Icons.Default.Call, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Enregistrer le nom à annoncer")
+                        Text(if (recordingAnnouncement) "Arrêter" else "Enregistrer le nom à annoncer")
                     }
                 }
             }
@@ -614,15 +620,25 @@ private fun SetupScreen(
                     Text("Réponses vocales de votre grand-mère", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Text("Pour confirmer un appel sans toucher l'écran, enregistrez au moins deux façons naturelles de dire OUI et deux de dire NON, dans sa variante de kabyle.", color = Color.DarkGray, fontSize = 13.sp)
                     Text("OUI : ${responses.yesPaths.size} exemples  •  NON : ${responses.noPaths.size} exemples", color = DeepRed, fontWeight = FontWeight.SemiBold)
-                    OutlinedButton(onClick = { onRecordResponse("yes") }, modifier = Modifier.fillMaxWidth(), enabled = !recording) {
-                        Icon(Icons.Default.Mic, contentDescription = null)
+                    val recordingYes = recording && recordingTask == RecordingTask.YES_ENROLLMENT
+                    OutlinedButton(
+                        onClick = { if (recordingYes) onStopRecording() else onRecordResponse("yes") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !recording || recordingYes
+                    ) {
+                        Icon(if (recordingYes) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Enregistrer un OUI")
+                        Text(if (recordingYes) "Arrêter" else "Enregistrer un OUI")
                     }
-                    OutlinedButton(onClick = { onRecordResponse("no") }, modifier = Modifier.fillMaxWidth(), enabled = !recording) {
-                        Icon(Icons.Default.Mic, contentDescription = null)
+                    val recordingNo = recording && recordingTask == RecordingTask.NO_ENROLLMENT
+                    OutlinedButton(
+                        onClick = { if (recordingNo) onStopRecording() else onRecordResponse("no") },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !recording || recordingNo
+                    ) {
+                        Icon(if (recordingNo) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Enregistrer un NON")
+                        Text(if (recordingNo) "Arrêter" else "Enregistrer un NON")
                     }
                 }
             }
