@@ -60,8 +60,8 @@ internal object LocalVoiceMatcher {
             val samplePaths = contact.samplePaths.filter { it.isNotBlank() }.distinct()
             if (samplePaths.size < MIN_NAME_SAMPLES) return@mapNotNull null
 
-            val distances = samplePaths.mapNotNull { path ->
-                val reference = getFeatures(File(path)) ?: return@mapNotNull null
+            val distances = samplePaths.mapNotNull sampleLoop@{ path ->
+                val reference = getFeatures(File(path)) ?: return@sampleLoop null
                 dtwDistance(query, reference)
             }.filter { it.isFinite() }.sorted()
 
