@@ -109,7 +109,7 @@ internal object LocalVoiceMatcher {
             scores.add(
                 ContactScore(
                     contact = contact,
-                    distance = averageBest(queryDistances),
+                    distance = averageBest(queryDistances, references.size - 1),
                     rejectionLimit = rejectionLimit
                 )
             )
@@ -183,9 +183,13 @@ internal object LocalVoiceMatcher {
         return if (distances.size < 2) null else averageBest(distances)
     }
 
-    private fun averageBest(distances: List<Double>): Double {
-        val count = min(MAX_REFERENCES_PER_DECISION, distances.size)
-        return distances.take(count).average()
+    private fun averageBest(
+        distances: List<Double>,
+        requestedCount: Int = MAX_REFERENCES_PER_DECISION
+    ): Double {
+        val count = min(requestedCount, distances.size)
+        return if (count > 0) distances.take(count).average()
+        else Double.POSITIVE_INFINITY
     }
 
     private fun getFeatures(file: File): Array<FloatArray>? {
