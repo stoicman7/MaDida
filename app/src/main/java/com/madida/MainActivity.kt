@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
     private var contacts by mutableStateOf<List<FamilyContact>>(emptyList())
     private var prompts by mutableStateOf(VoicePrompts())
     private var responses by mutableStateOf(VoiceResponses())
+    private var rejectedSamples by mutableStateOf<List<String>>(emptyList())
     private var screen by mutableStateOf(AppScreen.HOME)
     private var status by mutableStateOf("Prête")
     private var isRecording by mutableStateOf(false)
@@ -145,6 +146,7 @@ class MainActivity : ComponentActivity() {
                             contacts = contacts,
                             prompts = prompts,
                             responses = responses,
+                            rejectedSamples = rejectedSamples,
                             recording = isRecording,
                             recordingTask = recordingTask,
                             selectedContactId = selectedContactId,
@@ -156,11 +158,13 @@ class MainActivity : ComponentActivity() {
                             onDeleteContactSample = { contactId, audioPath -> deleteContactSample(contactId, audioPath) },
                             onDeleteContactAnnouncement = { deleteContactAnnouncement(it) },
                             onDeleteResponseSample = { kind, audioPath -> deleteResponseSample(kind, audioPath) },
+                            onDeleteRejectedSample = { deleteRejectedSample(it) },
                             onDeletePrompt = { deletePrompt(it) },
                             onRecordSample = {
                                 selectedContactId = it
                                 startRecording(RecordingTask.ENROLLMENT)
                             },
+                            onRecordRejectedSample = { startRecording(RecordingTask.REJECT_ENROLLMENT) },
                             onTestRecognition = { startRecording(RecordingTask.TEST_NAME) },
                             onRecordAnnouncement = {
                                 selectedContactId = it
@@ -181,6 +185,7 @@ class MainActivity : ComponentActivity() {
         contacts = store.loadContacts()
         prompts = store.loadPrompts()
         responses = store.loadResponses()
+        rejectedSamples = store.loadRejectedSamples()
         if (selectedContactId.isBlank() && contacts.isNotEmpty()) selectedContactId = contacts.first().id
     }
 
@@ -259,6 +264,14 @@ class MainActivity : ComponentActivity() {
         status = "Enregistrement vocal supprimé."
     }
 
+    private fun deleteRejectedSample(audioPath: String) {
+        if (isRecording || audioPath !in rejectedSamples) return
+        rejectedSamples = rejectedSamples.filterNot { it == audioPath }
+        store.saveRejectedSamples(rejectedSamples)
+        removeAudioFile(audioPath)
+        status = "Exemple de son à rejeter supprimé. Il en reste ${rejectedSamples.size}."
+    }
+
     private fun deletePrompt(key: String) {
         if (isRecording) return
         val oldPath = when (key) {
@@ -308,6 +321,24 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startRecording(task: RecordingTask) {
+        if (task == RecordingTask.CALL_NAME || task == RecordingTask.TEST_NAME) {
+            if (contacts.isEmpty()) {
+                status = "Ajoutez d'abord les contacts dans les réglages famille."
+                screen = AppScreen.SETUP
+                return
+            }
+            if (contacts.any { it.samplePaths.size < 3 }) {
+                status = "Enregistrez au moins trois prononciations pour chaque contact."
+                screen = AppScreen.SETUP
+                return
+            }
+            if (rejectedSamples.size < 3) {
+                status = "Enregistrez au moins trois sons qui ne correspondent à aucun contact."
+                screen = AppScreen.SETUP
+                return
+            }
+        }
+
         val neededPermission = Manifest.permission.RECORD_AUDIO
         if (ContextCompat.checkSelfPermission(this, neededPermission) != PackageManager.PERMISSION_GRANTED) {
             pendingPermissionAction = { startRecording(task) }
@@ -344,7 +375,8 @@ class MainActivity : ComponentActivity() {
                 RecordingTask.CALL_NAME -> "Écoute… dites le prénom, puis touchez STOP."
                 RecordingTask.TEST_NAME -> "Test : prononcez un nom, puis touchez STOP. Aucun appel ne sera lancé."
                 RecordingTask.CONFIRMATION -> "Écoute… dites oui ou non, puis touchez STOP."
-                RecordingTask.ENROLLMENT -> "La grand-mère prononce le nom, puis touchez STOP."
+                RecordingTask.ENROLLMENT -> "La personne qui utilisera MaDida prononce le nom, puis touchez STOP."
+                RecordingTask.REJECT_ENROLLMENT -> "La même personne prononce un mot ou un son qui ne correspond à aucun contact, puis touchez STOP."
                 RecordingTask.CONTACT_LABEL -> "Un membre de la famille prononce le nom, puis touchez STOP."
                 RecordingTask.YES_ENROLLMENT -> "Prononcez votre réponse OUI, puis touchez STOP."
                 RecordingTask.NO_ENROLLMENT -> "Prononcez votre réponse NON, puis touchez STOP."
@@ -376,6 +408,7 @@ class MainActivity : ComponentActivity() {
             RecordingTask.TEST_NAME -> testSpokenContact(file)
             RecordingTask.CONFIRMATION -> resolveConfirmation(file)
             RecordingTask.ENROLLMENT -> saveEnrollment(file)
+            RecordingTask.REJECT_ENROLLMENT -> saveRejectedSample(file)
             RecordingTask.CONTACT_LABEL -> saveContactAnnouncement(file)
             RecordingTask.YES_ENROLLMENT -> saveResponseSample("yes", file)
             RecordingTask.NO_ENROLLMENT -> saveResponseSample("no", file)
@@ -396,6 +429,12 @@ class MainActivity : ComponentActivity() {
         contacts = contacts.map { if (it.id == contact.id) updated else it }
         store.saveContacts(contacts)
         status = "Prononciation enregistrée (${updated.samplePaths.size}). Vous pouvez en ajouter d'autres."
+    }
+
+    private fun saveRejectedSample(file: File) {
+        rejectedSamples = rejectedSamples + file.absolutePath
+        store.saveRejectedSamples(rejectedSamples)
+        status = "Son à rejeter enregistré (${rejectedSamples.size}). Ajoutez-en au moins trois, idéalement cinq à huit."
     }
 
     private fun saveContactAnnouncement(file: File) {
@@ -435,7 +474,7 @@ class MainActivity : ComponentActivity() {
             try {
                 status = "Recherche locale du contact…"
                 val decision = withContext(Dispatchers.Default) {
-                    LocalVoiceMatcher.identify(file, contacts)
+                    LocalVoiceMatcher.identify(file, contacts, rejectedSamples)
                 }
                 val contact = decision.contact
                 if (decision.status == "match" && contact != null) {
@@ -468,13 +507,14 @@ class MainActivity : ComponentActivity() {
             try {
                 status = "Test de reconnaissance en cours… aucun appel ne sera lancé."
                 val decision = withContext(Dispatchers.Default) {
-                    LocalVoiceMatcher.identify(file, contacts)
+                    LocalVoiceMatcher.identify(file, contacts, rejectedSamples)
                 }
                 val candidate = decision.contact ?: decision.bestCandidate
                 status = when (decision.status) {
-                    "match" -> "TEST : contact reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
-                    "unknown_sound" -> "TEST : son rejeté, aucun contact proposé. Aucun appel lancé."
+                    "match" -> "TEST : RECONNU = ${candidate?.displayName} ; distance contact : ${decision.bestDistance?.let { "%.3f".format(java.util.Locale.US, it) } ?: "—"} ; distance sons à rejeter : ${decision.negativeDistance?.let { "%.3f".format(java.util.Locale.US, it) } ?: "—"} ; limite contact : ${decision.rejectionLimit?.let { "%.3f".format(java.util.Locale.US, it) } ?: "—"}. Aucun appel lancé."
+                    "unknown_sound" -> "TEST : REJETÉ. Plus proche contact : ${candidate?.displayName ?: "aucun"} ; distance contact : ${decision.bestDistance?.let { "%.3f".format(java.util.Locale.US, it) } ?: "—"} ; distance sons à rejeter : ${decision.negativeDistance?.let { "%.3f".format(java.util.Locale.US, it) } ?: "—"} ; limite contact : ${decision.rejectionLimit?.let { "%.3f".format(java.util.Locale.US, it) } ?: "—"}. Aucun appel lancé."
                     "need_calibration" -> "TEST : il faut au moins trois exemples valides pour chaque contact."
+                    "need_rejection_calibration" -> "TEST : enregistrez au moins trois sons à rejeter."
                     "need_enrollment" -> "TEST : enregistrez au moins un contact."
                     else -> "TEST : enregistrement audio invalide. Réessayez."
                 }
@@ -589,7 +629,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class AppScreen { HOME, SETUP }
 private enum class RecordingTask {
-    NONE, CALL_NAME, TEST_NAME, CONFIRMATION, ENROLLMENT, CONTACT_LABEL, YES_ENROLLMENT, NO_ENROLLMENT, PROMPT_ASK, PROMPT_CONFIRM, PROMPT_REPEAT, PROMPT_NOT_FOUND;
+    NONE, CALL_NAME, TEST_NAME, CONFIRMATION, ENROLLMENT, REJECT_ENROLLMENT, CONTACT_LABEL, YES_ENROLLMENT, NO_ENROLLMENT, PROMPT_ASK, PROMPT_CONFIRM, PROMPT_REPEAT, PROMPT_NOT_FOUND;
     companion object {
         fun fromResponseKey(key: String): RecordingTask = if (key == "yes") YES_ENROLLMENT else NO_ENROLLMENT
 
@@ -677,6 +717,7 @@ private fun SetupScreen(
     contacts: List<FamilyContact>,
     prompts: VoicePrompts,
     responses: VoiceResponses,
+    rejectedSamples: List<String>,
     recording: Boolean,
     recordingTask: RecordingTask,
     selectedContactId: String,
@@ -688,8 +729,10 @@ private fun SetupScreen(
     onDeleteContactSample: (String, String) -> Unit,
     onDeleteContactAnnouncement: (String) -> Unit,
     onDeleteResponseSample: (String, String) -> Unit,
+    onDeleteRejectedSample: (String) -> Unit,
     onDeletePrompt: (String) -> Unit,
     onRecordSample: (String) -> Unit,
+    onRecordRejectedSample: () -> Unit,
     onTestRecognition: () -> Unit,
     onRecordAnnouncement: (String) -> Unit,
     onRecordPrompt: (String) -> Unit,
@@ -730,12 +773,14 @@ private fun SetupScreen(
         }
         item {
             Text("Enregistrer les prononciations", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
-            Text("Pour activer le garde-fou contre les sons inconnus, enregistrez au moins trois prononciations par contact. Cinq à huit sont préférables.", color = Color.DarkGray, fontSize = 13.sp)
+            Text("La personne qui utilisera MaDida doit prononcer chaque nom au moins trois fois. Cinq à huit enregistrements sont préférables.", color = Color.DarkGray, fontSize = 13.sp)
+            Text("Exemples de noms : ${contacts.sumOf { it.samplePaths.size }} au total.", color = Color.DarkGray, fontSize = 12.sp)
             val testingNow = recording && recordingTask == RecordingTask.TEST_NAME
             OutlinedButton(
                 onClick = { if (testingNow) onStopRecording() else onTestRecognition() },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !recording || testingNow && contacts.isNotEmpty() && contacts.all { it.samplePaths.size >= 3 }
+                enabled = testingNow || (!recording && contacts.isNotEmpty() &&
+                    contacts.all { it.samplePaths.size >= 3 } && rejectedSamples.size >= 3)
             ) {
                 Icon(if (testingNow) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -817,6 +862,32 @@ private fun SetupScreen(
                         Icon(if (recordingAnnouncement) Icons.Default.Stop else Icons.Default.Call, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(if (recordingAnnouncement) "Arrêter" else "Enregistrer le nom à annoncer")
+                    }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(16.dp)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Sons et mots à rejeter", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    Text("La personne qui utilisera MaDida doit enregistrer au moins trois exemples qui ne correspondent à aucun contact : mots quelconques, syllabes ou sons volontairement étrangers. Cinq à huit exemples variés sont préférables.", color = Color.DarkGray, fontSize = 13.sp)
+                    Text("Exemples à rejeter : ${rejectedSamples.size}", color = DeepRed, fontWeight = FontWeight.SemiBold)
+                    rejectedSamples.forEachIndexed { index, audioPath ->
+                        AudioSampleRow(
+                            label = "Son à rejeter ${index + 1}",
+                            onDelete = { onDeleteRejectedSample(audioPath) },
+                            enabled = !recording
+                        )
+                    }
+                    val recordingRejected = recording && recordingTask == RecordingTask.REJECT_ENROLLMENT
+                    OutlinedButton(
+                        onClick = { if (recordingRejected) onStopRecording() else onRecordRejectedSample() },
+                        modifier = Modifier.fillMaxWidth(),
+                        enabled = !recording || recordingRejected
+                    ) {
+                        Icon(if (recordingRejected) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(if (recordingRejected) "Arrêter" else "Enregistrer un son à rejeter")
                     }
                 }
             }
