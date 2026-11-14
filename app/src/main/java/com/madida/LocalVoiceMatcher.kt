@@ -89,10 +89,9 @@ internal object LocalVoiceMatcher {
         if (negativeDistances.size < 3) {
             return ContactDecision(status = "need_rejection_calibration")
         }
-        val negativeDistance = averageBest(
-            negativeDistances,
-            min(MAX_REFERENCES_PER_DECISION, negativeDistances.size)
-        )
+        // One strong match to a known non-contact sound is enough to reject
+        // the query; averaging distant negative examples could hide that match.
+        val negativeDistance = negativeDistances.first()
 
         val scores = mutableListOf<ContactScore>()
 
