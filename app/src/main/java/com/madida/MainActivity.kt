@@ -28,18 +28,21 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -149,6 +152,7 @@ class MainActivity : ComponentActivity() {
                             onBack = { screen = AppScreen.HOME; playPrompt(prompts.askWho) },
                             onAddContact = { name, phone, aliases -> addContact(name, phone, aliases) },
                             onSelectContact = { selectedContactId = it },
+                            onDeleteContact = { deleteContact(it) },
                             onRecordSample = {
                                 selectedContactId = it
                                 startRecording(RecordingTask.ENROLLMENT)
@@ -174,6 +178,47 @@ class MainActivity : ComponentActivity() {
         prompts = store.loadPrompts()
         responses = store.loadResponses()
         if (selectedContactId.isBlank() && contacts.isNotEmpty()) selectedContactId = contacts.first().id
+    }
+
+    private fun deleteContact(contactId: String) {
+        if (isRecording) {
+            status = "Arrêtez d'abord l'enregistrement avant de supprimer un contact."
+            return
+        }
+
+        val contact = contacts.firstOrNull { it.id == contactId } ?: return
+        player.stop()
+
+        val updatedContacts = contacts.filterNot { it.id == contactId }
+        store.saveContacts(updatedContacts)
+        contacts = updatedContacts
+
+        if (selectedContactId == contactId) {
+            selectedContactId = updatedContacts.firstOrNull()?.id.orEmpty()
+        }
+        if (matchedContact?.id == contactId) {
+            matchedContact = null
+        }
+
+        (contact.samplePaths + listOfNotNull(contact.announcementPath))
+            .distinct()
+            .forEach { path ->
+                val audioFile = File(path)
+                LocalVoiceMatcher.forget(audioFile)
+                deleteRecordingFile(audioFile)
+            }
+
+        status = "Contact ${contact.displayName} supprimé."
+    }
+
+    private fun deleteRecordingFile(file: File) {
+        try {
+            val recordingsDirectory = File(filesDir, "recordings").canonicalFile
+            val candidate = file.canonicalFile
+            if (candidate.parentFile == recordingsDirectory && candidate.isFile) {
+                candidate.delete()
+            }
+        } catch (_: Exception) { }
     }
 
     private fun addContact(name: String, phone: String, aliasesText: String) {
@@ -217,7 +262,16 @@ class MainActivity : ComponentActivity() {
             player.stop()
             val folder = File(filesDir, "recordings").apply { mkdirs() }
             val file = File(folder, "${task.name.lowercase()}_${System.currentTimeMillis()}.wav")
-            recorder.start(file)
+            recorder.start(file) { message ->
+                runOnUiThread {
+                    if (isRecording && recordingTask == task) {
+                        try { recorder.stop() } catch (_: Exception) { }
+                        isRecording = false
+                        recordingTask = RecordingTask.NONE
+                        status = "L'enregistrement a été interrompu. Réessayez. ($message)"
+                    }
+                }
+            }
             recordingTask = task
             isRecording = true
             status = when (task) {
@@ -233,6 +287,7 @@ class MainActivity : ComponentActivity() {
         } catch (e: Exception) {
             status = "Impossible de démarrer le microphone : ${e.localizedMessage ?: "erreur"}"
             isRecording = false
+            recordingTask = RecordingTask.NONE
         }
     }
 
@@ -246,6 +301,7 @@ class MainActivity : ComponentActivity() {
         isRecording = false
         recordingTask = RecordingTask.NONE
         if (file == null || !file.exists() || file.length() < 1000) {
+            file?.delete()
             status = stopError?.let { "Erreur d'enregistrement : $it" } ?: "Enregistrement trop court. Réessayez."
             return
         }
