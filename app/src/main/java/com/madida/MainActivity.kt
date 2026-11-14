@@ -153,6 +153,7 @@ class MainActivity : ComponentActivity() {
                                 selectedContactId = it
                                 startRecording(RecordingTask.ENROLLMENT)
                             },
+                            onTestRecognition = { startRecording(RecordingTask.TEST_NAME) },
                             onRecordAnnouncement = {
                                 selectedContactId = it
                                 startRecording(RecordingTask.CONTACT_LABEL)
@@ -221,6 +222,7 @@ class MainActivity : ComponentActivity() {
             isRecording = true
             status = when (task) {
                 RecordingTask.CALL_NAME -> "Écoute… dites le prénom, puis touchez STOP."
+                RecordingTask.TEST_NAME -> "Test : prononcez un nom, puis touchez STOP. Aucun appel ne sera lancé."
                 RecordingTask.CONFIRMATION -> "Écoute… dites oui ou non, puis touchez STOP."
                 RecordingTask.ENROLLMENT -> "La grand-mère prononce le nom, puis touchez STOP."
                 RecordingTask.CONTACT_LABEL -> "Un membre de la famille prononce le nom, puis touchez STOP."
@@ -249,6 +251,7 @@ class MainActivity : ComponentActivity() {
         }
         when (task) {
             RecordingTask.CALL_NAME -> resolveSpokenContact(file)
+            RecordingTask.TEST_NAME -> testSpokenContact(file)
             RecordingTask.CONFIRMATION -> resolveConfirmation(file)
             RecordingTask.ENROLLMENT -> saveEnrollment(file)
             RecordingTask.CONTACT_LABEL -> saveContactAnnouncement(file)
@@ -326,6 +329,25 @@ class MainActivity : ComponentActivity() {
                 }
                 playPrompt(prompts.repeat ?: prompts.notFound)
             }
+        }
+    }
+
+    private fun testSpokenContact(file: File) {
+        lifecycleScope.launch {
+            status = "Test de reconnaissance en cours… aucun appel ne sera lancé."
+            val decision = withContext(Dispatchers.Default) {
+                LocalVoiceMatcher.identify(file, contacts)
+            }
+            val candidate = decision.contact ?: decision.bestCandidate
+            status = when (decision.status) {
+                "match" -> "TEST : nom reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
+                "ambiguous" -> "TEST : hésitation entre plusieurs contacts. Réessayez avec une prononciation plus distincte."
+                "no_match" -> "TEST : aucun nom suffisamment proche. Aucun appel lancé."
+                "need_enrollment" -> "TEST : ajoutez au moins trois prononciations valides par contact."
+                else -> "TEST : enregistrement audio invalide. Réessayez."
+            }
+            LocalVoiceMatcher.forget(file)
+            file.delete()
         }
     }
 
@@ -407,7 +429,7 @@ class MainActivity : ComponentActivity() {
 
 private enum class AppScreen { HOME, SETUP }
 private enum class RecordingTask {
-    NONE, CALL_NAME, CONFIRMATION, ENROLLMENT, CONTACT_LABEL, YES_ENROLLMENT, NO_ENROLLMENT, PROMPT_ASK, PROMPT_CONFIRM, PROMPT_REPEAT, PROMPT_NOT_FOUND;
+    NONE, CALL_NAME, TEST_NAME, CONFIRMATION, ENROLLMENT, CONTACT_LABEL, YES_ENROLLMENT, NO_ENROLLMENT, PROMPT_ASK, PROMPT_CONFIRM, PROMPT_REPEAT, PROMPT_NOT_FOUND;
     companion object {
         fun fromResponseKey(key: String): RecordingTask = if (key == "yes") YES_ENROLLMENT else NO_ENROLLMENT
 
@@ -503,6 +525,7 @@ private fun SetupScreen(
     onAddContact: (String, String, String) -> Unit,
     onSelectContact: (String) -> Unit,
     onRecordSample: (String) -> Unit,
+    onTestRecognition: () -> Unit,
     onRecordAnnouncement: (String) -> Unit,
     onRecordPrompt: (String) -> Unit,
     onRecordResponse: (String) -> Unit,
@@ -554,6 +577,11 @@ private fun SetupScreen(
         item {
             Text("Enregistrer les prononciations", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
             Text("Sélectionnez une personne, puis demandez-lui de prononcer son nom au moins trois fois. Les enregistrements restent sur le téléphone et sont comparés localement, sans Internet.", color = Color.DarkGray, fontSize = 13.sp)
+            OutlinedButton(onClick = onTestRecognition, modifier = Modifier.fillMaxWidth(), enabled = !recording && contacts.any { it.samplePaths.size >= 3 }) {
+                Icon(Icons.Default.Mic, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Tester la reconnaissance (sans appeler)")
+            }
         }
         items(contacts, key = { it.id }) { contact ->
             val selected = selectedContactId == contact.id
