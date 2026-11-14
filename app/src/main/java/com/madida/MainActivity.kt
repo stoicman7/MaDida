@@ -30,10 +30,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.PersonAdd
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -159,7 +162,9 @@ class MainActivity : ComponentActivity() {
                             },
                             onRecordPrompt = { key -> startRecording(RecordingTask.fromPromptKey(key)) },
                             onRecordResponse = { key -> startRecording(RecordingTask.fromResponseKey(key)) },
-                            onStopRecording = { stopCurrentRecording() }
+                            onStopRecording = { stopCurrentRecording() },
+                            onPlayRecording = { playSavedRecording(it) },
+                            onDeleteRecording = { deleteSavedRecording(it) }
                         )
                     }
                 }
@@ -368,6 +373,66 @@ class MainActivity : ComponentActivity() {
         if (path != null && File(path).exists()) player.playSequence(listOf(path))
     }
 
+
+    private fun playSavedRecording(path: String) {
+        val file = File(path)
+        if (!file.exists()) {
+            status = "Ce fichier audio n'existe plus."
+            return
+        }
+        player.playSequence(listOf(file.absolutePath))
+        status = "Lecture de l'enregistrement…"
+    }
+
+    private fun deleteSavedRecording(path: String) {
+        val recordingsRoot = try { File(filesDir, "recordings").canonicalFile } catch (_: Exception) {
+            status = "Impossible de vérifier le dossier audio."
+            return
+        }
+        val target = try { File(path).canonicalFile } catch (_: Exception) {
+            status = "Chemin audio invalide."
+            return
+        }
+        if (target.parentFile != recordingsRoot) {
+            status = "Suppression refusée : fichier hors du dossier des enregistrements."
+            return
+        }
+
+        var contactsChanged = false
+        contacts = contacts.map { contact ->
+            val samples = contact.samplePaths.filterNot { it == path }
+            val announcement = if (contact.announcementPath == path) null else contact.announcementPath
+            if (samples != contact.samplePaths || announcement != contact.announcementPath) contactsChanged = true
+            contact.copy(samplePaths = samples, announcementPath = announcement)
+        }
+        if (contactsChanged) store.saveContacts(contacts)
+
+        val updatedPrompts = prompts.copy(
+            askWho = if (prompts.askWho == path) null else prompts.askWho,
+            confirm = if (prompts.confirm == path) null else prompts.confirm,
+            repeat = if (prompts.repeat == path) null else prompts.repeat,
+            notFound = if (prompts.notFound == path) null else prompts.notFound
+        )
+        if (updatedPrompts != prompts) {
+            prompts = updatedPrompts
+            store.savePrompts(prompts)
+        }
+
+        val updatedResponses = responses.copy(
+            yesPaths = responses.yesPaths.filterNot { it == path },
+            noPaths = responses.noPaths.filterNot { it == path }
+        )
+        if (updatedResponses != responses) {
+            responses = updatedResponses
+            store.saveResponses(responses)
+        }
+
+        LocalVoiceMatcher.invalidate(path)
+        val deleted = !target.exists() || target.delete()
+        status = if (deleted) "Enregistrement supprimé et références mises à jour."
+        else "Références supprimées, mais le fichier audio n'a pas pu être effacé."
+    }
+
     private fun callContact(contact: FamilyContact) {
         val permission = Manifest.permission.CALL_PHONE
         if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
@@ -430,62 +495,76 @@ private fun HomeScreen(
     onNo: () -> Unit,
     onOpenSetup: () -> Unit
 ) {
-    Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 20.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.SpaceBetween
-    ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("MaDida", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = DeepRed)
-            TextButton(onClick = onOpenSetup) {
-                Icon(Icons.Default.Settings, contentDescription = "Réglages famille", tint = DeepRed)
+    Box(Modifier.fillMaxSize()) {
+        Column(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 20.dp)
+                .padding(bottom = if (recording) 88.dp else 0.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                Text("MaDida", fontSize = 25.sp, fontWeight = FontWeight.Bold, color = DeepRed)
+                TextButton(onClick = onOpenSetup) {
+                    Icon(Icons.Default.Settings, contentDescription = "Réglages famille", tint = DeepRed)
+                }
+            }
+            if (matchedContact == null) {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.weight(1f)) {
+                    Text("Qui voulez-vous appeler ?", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, color = DarkText)
+                    Spacer(Modifier.height(28.dp))
+                    Box(
+                        modifier = Modifier.size(190.dp).background(if (recording) Color(0xFFBDBDBD) else DeepRed, CircleShape)
+                            .clickable(onClick = onMainAction),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(if (recording) Icons.Default.Stop else Icons.Default.Mic, contentDescription = if (recording) "Arrêter" else "Parler", tint = Color.White, modifier = Modifier.size(86.dp))
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Text(if (recording) "ENREGISTREMENT EN COURS" else "TOUCHEZ POUR PARLER", fontWeight = FontWeight.Bold, color = DeepRed, fontSize = 16.sp)
+                }
+            } else {
+                Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.weight(1f)) {
+                    Text("Voulez-vous appeler ?", fontSize = 23.sp, fontWeight = FontWeight.SemiBold, color = DarkText)
+                    Spacer(Modifier.height(22.dp))
+                    Box(Modifier.size(132.dp).background(PaleRed, CircleShape), contentAlignment = Alignment.Center) {
+                        Text(matchedContact.displayName.take(1).uppercase(), fontSize = 52.sp, color = DeepRed, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(14.dp))
+                    Text(matchedContact.displayName, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = DarkText)
+                    Spacer(Modifier.height(24.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        Button(onClick = onYes, modifier = Modifier.weight(1f).height(76.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF207A38)), shape = RoundedCornerShape(18.dp)) {
+                            Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(26.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("OUI", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                        Button(onClick = onNo, modifier = Modifier.weight(1f).height(76.dp), colors = ButtonDefaults.buttonColors(containerColor = DeepRed), shape = RoundedCornerShape(18.dp)) {
+                            Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(26.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("NON", fontSize = 20.sp, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                    Spacer(Modifier.height(22.dp))
+                    Button(onClick = onMainAction, modifier = Modifier.fillMaxWidth().height(72.dp), colors = ButtonDefaults.buttonColors(containerColor = DeepRed), shape = RoundedCornerShape(18.dp)) {
+                        Icon(if (recording) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(26.dp))
+                        Spacer(Modifier.width(10.dp))
+                        Text(if (recording) "ARRÊTER" else "RÉPONDRE À LA VOIX", fontWeight = FontWeight.Bold, fontSize = 17.sp)
+                    }
+                }
+            }
+            Text(status, fontSize = 14.sp, color = Color(0xFF555555), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
+        }
+        if (recording) {
+            Button(
+                onClick = onMainAction,
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth().padding(horizontal = 22.dp, vertical = 14.dp).height(62.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DeepRed)
+            ) {
+                Icon(Icons.Default.Stop, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("ARRÊTER L'ENREGISTREMENT", fontWeight = FontWeight.Bold)
             }
         }
-        if (matchedContact == null) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.weight(1f)) {
-                Text("Qui voulez-vous appeler ?", fontSize = 24.sp, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center, color = DarkText)
-                Spacer(Modifier.height(28.dp))
-                Box(
-                    modifier = Modifier.size(190.dp).background(if (recording) Color(0xFFBDBDBD) else DeepRed, CircleShape)
-                        .clickable(onClick = onMainAction),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(if (recording) Icons.Default.Stop else Icons.Default.Mic, contentDescription = if (recording) "Arrêter" else "Parler", tint = Color.White, modifier = Modifier.size(86.dp))
-                }
-                Spacer(Modifier.height(16.dp))
-                Text(if (recording) "TOUCHEZ POUR TERMINER" else "TOUCHEZ POUR PARLER", fontWeight = FontWeight.Bold, color = DeepRed, fontSize = 16.sp)
-            }
-        } else {
-            Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center, modifier = Modifier.weight(1f)) {
-                Text("Voulez-vous appeler ?", fontSize = 23.sp, fontWeight = FontWeight.SemiBold, color = DarkText)
-                Spacer(Modifier.height(22.dp))
-                Box(Modifier.size(132.dp).background(PaleRed, CircleShape), contentAlignment = Alignment.Center) {
-                    Text(matchedContact.displayName.take(1).uppercase(), fontSize = 52.sp, color = DeepRed, fontWeight = FontWeight.Bold)
-                }
-                Spacer(Modifier.height(14.dp))
-                Text(matchedContact.displayName, fontSize = 28.sp, fontWeight = FontWeight.Bold, color = DarkText)
-                Spacer(Modifier.height(24.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Button(onClick = onYes, modifier = Modifier.weight(1f).height(76.dp), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF207A38)), shape = RoundedCornerShape(18.dp)) {
-                        Icon(Icons.Default.CheckCircle, contentDescription = null, modifier = Modifier.size(26.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("OUI", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    }
-                    Button(onClick = onNo, modifier = Modifier.weight(1f).height(76.dp), colors = ButtonDefaults.buttonColors(containerColor = DeepRed), shape = RoundedCornerShape(18.dp)) {
-                        Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(26.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("NON", fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    }
-                }
-                Spacer(Modifier.height(22.dp))
-                Button(onClick = onMainAction, modifier = Modifier.fillMaxWidth().height(72.dp), colors = ButtonDefaults.buttonColors(containerColor = DeepRed), shape = RoundedCornerShape(18.dp)) {
-                    Icon(if (recording) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null, modifier = Modifier.size(26.dp))
-                    Spacer(Modifier.width(10.dp))
-                    Text(if (recording) "ARRÊTER" else "RÉPONDRE À LA VOIX", fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                }
-            }
-        }
-        Text(status, fontSize = 14.sp, color = Color(0xFF555555), textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp))
     }
 }
 
@@ -506,35 +585,26 @@ private fun SetupScreen(
     onRecordAnnouncement: (String) -> Unit,
     onRecordPrompt: (String) -> Unit,
     onRecordResponse: (String) -> Unit,
-    onStopRecording: () -> Unit
+    onStopRecording: () -> Unit,
+    onPlayRecording: (String) -> Unit,
+    onDeleteRecording: (String) -> Unit
 ) {
     var name by androidx.compose.runtime.remember { mutableStateOf("") }
     var phone by androidx.compose.runtime.remember { mutableStateOf("") }
     var aliases by androidx.compose.runtime.remember { mutableStateOf("") }
 
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().padding(18.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 18.dp)
+                .padding(bottom = if (recording) 96.dp else 18.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
         item {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                 Text("Configuration MaDida", fontSize = 23.sp, fontWeight = FontWeight.Bold, color = DeepRed)
                 TextButton(onClick = onBack) { Text("Retour", color = DeepRed) }
             }
             Text("Cet écran est destiné à la famille. La grand-mère n'a pas besoin de le consulter.", color = Color.DarkGray, fontSize = 13.sp)
-        }
-        if (recording) {
-            item {
-                Button(
-                    onClick = onStopRecording,
-                    modifier = Modifier.fillMaxWidth().height(62.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = DeepRed)
-                ) {
-                    Icon(Icons.Default.Stop, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("ARRÊTER L'ENREGISTREMENT", fontWeight = FontWeight.Bold)
-                }
-            }
         }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(16.dp)) {
@@ -566,12 +636,18 @@ private fun SetupScreen(
                     Text(contact.displayName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
                     Text(contact.phoneNumber, color = Color.DarkGray, fontSize = 13.sp)
                     Text("Exemples enregistrés : ${contact.samplePaths.size}", color = Color.DarkGray, fontSize = 13.sp)
+                    contact.samplePaths.forEachIndexed { index, path ->
+                        SavedRecordingRow("Prononciation ${index + 1}", path, recording, onPlayRecording, onDeleteRecording)
+                    }
                     OutlinedButton(onClick = { onRecordSample(contact.id) }, modifier = Modifier.fillMaxWidth(), enabled = !recording) {
                         Icon(Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text("Ajouter une prononciation")
                     }
                     Text(if (contact.announcementPath != null) "Nom à annoncer : enregistré" else "Nom à annoncer : non enregistré", color = Color.DarkGray, fontSize = 12.sp)
+                    contact.announcementPath?.let { path ->
+                        SavedRecordingRow("Annonce du nom", path, recording, onPlayRecording, onDeleteRecording)
+                    }
                     OutlinedButton(onClick = { onRecordAnnouncement(contact.id) }, modifier = Modifier.fillMaxWidth(), enabled = !recording) {
                         Icon(Icons.Default.Call, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
@@ -586,6 +662,12 @@ private fun SetupScreen(
                     Text("Réponses vocales de votre grand-mère", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Text("Pour confirmer un appel sans toucher l'écran, enregistrez au moins deux façons naturelles de dire OUI et deux de dire NON, dans sa variante de kabyle.", color = Color.DarkGray, fontSize = 13.sp)
                     Text("OUI : ${responses.yesPaths.size} exemples  •  NON : ${responses.noPaths.size} exemples", color = DeepRed, fontWeight = FontWeight.SemiBold)
+                    responses.yesPaths.forEachIndexed { index, path ->
+                        SavedRecordingRow("OUI ${index + 1}", path, recording, onPlayRecording, onDeleteRecording)
+                    }
+                    responses.noPaths.forEachIndexed { index, path ->
+                        SavedRecordingRow("NON ${index + 1}", path, recording, onPlayRecording, onDeleteRecording)
+                    }
                     OutlinedButton(onClick = { onRecordResponse("yes") }, modifier = Modifier.fillMaxWidth(), enabled = !recording) {
                         Icon(Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
@@ -603,13 +685,26 @@ private fun SetupScreen(
             Text("Enregistrer les phrases en kabyle", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
             Text("Un membre de la famille peut enregistrer ces phrases dans la variante de Béjaïa. L'application les fera écouter à votre grand-mère.", color = Color.DarkGray, fontSize = 13.sp)
         }
-        item { PromptRecordRow("Demander qui appeler", "askWho", prompts.askWho, recording, recordingTask, onRecordPrompt, onStopRecording) }
-        item { PromptRecordRow("Demander confirmation", "confirm", prompts.confirm, recording, recordingTask, onRecordPrompt, onStopRecording) }
-        item { PromptRecordRow("Demander de répéter", "repeat", prompts.repeat, recording, recordingTask, onRecordPrompt, onStopRecording) }
-        item { PromptRecordRow("Nom non reconnu", "notFound", prompts.notFound, recording, recordingTask, onRecordPrompt, onStopRecording) }
+        item { PromptRecordRow("Demander qui appeler", "askWho", prompts.askWho, recording, recordingTask, onRecordPrompt, onStopRecording, onPlayRecording, onDeleteRecording) }
+        item { PromptRecordRow("Demander confirmation", "confirm", prompts.confirm, recording, recordingTask, onRecordPrompt, onStopRecording, onPlayRecording, onDeleteRecording) }
+        item { PromptRecordRow("Demander de répéter", "repeat", prompts.repeat, recording, recordingTask, onRecordPrompt, onStopRecording, onPlayRecording, onDeleteRecording) }
+        item { PromptRecordRow("Nom non reconnu", "notFound", prompts.notFound, recording, recordingTask, onRecordPrompt, onStopRecording, onPlayRecording, onDeleteRecording) }
         item {
             Text(status, color = DeepRed, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), textAlign = TextAlign.Center)
             Spacer(Modifier.height(24.dp))
+        }
+        }
+        if (recording) {
+            Button(
+                onClick = onStopRecording,
+                modifier = Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+                    .padding(horizontal = 18.dp, vertical = 14.dp).height(62.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = DeepRed)
+            ) {
+                Icon(Icons.Default.Stop, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("ARRÊTER L'ENREGISTREMENT", fontWeight = FontWeight.Bold)
+            }
         }
     }
 }
@@ -622,7 +717,9 @@ private fun PromptRecordRow(
     recording: Boolean,
     recordingTask: RecordingTask,
     onRecord: (String) -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onPlay: (String) -> Unit,
+    onDelete: (String) -> Unit
 ) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(12.dp)) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -635,5 +732,47 @@ private fun PromptRecordRow(
                 enabled = !recording || recordingTask == RecordingTask.fromPromptKey(key)
             ) { Text(if (recording && recordingTask == RecordingTask.fromPromptKey(key)) "STOP" else "Enregistrer") }
         }
+        if (path != null) SavedRecordingRow(title, path, recording, onPlay, onDelete)
+    }
+}
+
+@Composable
+private fun SavedRecordingRow(
+    title: String,
+    path: String,
+    recording: Boolean,
+    onPlay: (String) -> Unit,
+    onDelete: (String) -> Unit
+) {
+    var confirmDelete by androidx.compose.runtime.remember(path) { mutableStateOf(false) }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        Text(title, modifier = Modifier.weight(1f), color = Color.DarkGray, fontSize = 13.sp)
+        OutlinedButton(onClick = { onPlay(path) }, enabled = !recording && File(path).exists()) {
+            Icon(Icons.Default.PlayArrow, contentDescription = "Écouter")
+            Text("Écouter")
+        }
+        TextButton(onClick = { confirmDelete = true }, enabled = !recording) {
+            Icon(Icons.Default.Delete, contentDescription = "Supprimer", tint = DeepRed)
+        }
+    }
+    if (confirmDelete) {
+        AlertDialog(
+            onDismissRequest = { confirmDelete = false },
+            title = { Text("Supprimer cet enregistrement ?") },
+            text = { Text("Il sera retiré des données de l'application et effacé du téléphone.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmDelete = false
+                    onDelete(path)
+                }) { Text("Supprimer", color = DeepRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmDelete = false }) { Text("Annuler") }
+            }
+        )
     }
 }
