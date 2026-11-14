@@ -580,6 +580,7 @@ private fun SetupScreen(
     onBack: () -> Unit,
     onAddContact: (String, String, String) -> Unit,
     onSelectContact: (String) -> Unit,
+    onDeleteContact: (String) -> Unit,
     onRecordSample: (String) -> Unit,
     onTestRecognition: () -> Unit,
     onRecordAnnouncement: (String) -> Unit,
@@ -590,6 +591,7 @@ private fun SetupScreen(
     var name by androidx.compose.runtime.remember { mutableStateOf("") }
     var phone by androidx.compose.runtime.remember { mutableStateOf("") }
     var aliases by androidx.compose.runtime.remember { mutableStateOf("") }
+    var contactToDelete by androidx.compose.runtime.remember { mutableStateOf<FamilyContact?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(18.dp),
@@ -639,9 +641,26 @@ private fun SetupScreen(
                 shape = RoundedCornerShape(14.dp)
             ) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(contact.displayName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-                    Text(contact.phoneNumber, color = Color.DarkGray, fontSize = 13.sp)
-                    Text("Exemples enregistrés : ${contact.samplePaths.size}", color = Color.DarkGray, fontSize = 13.sp)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(contact.displayName, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text(contact.phoneNumber, color = Color.DarkGray, fontSize = 13.sp)
+                            Text("Exemples enregistrés : ${contact.samplePaths.size}", color = Color.DarkGray, fontSize = 13.sp)
+                        }
+                        IconButton(
+                            onClick = { contactToDelete = contact },
+                            enabled = !recording
+                        ) {
+                            Icon(
+                                Icons.Default.Delete,
+                                contentDescription = "Supprimer ${contact.displayName}",
+                                tint = DeepRed
+                            )
+                        }
+                    }
                     val recordingSample = recording &&
                         recordingTask == RecordingTask.ENROLLMENT &&
                         selectedContactId == contact.id
@@ -711,6 +730,31 @@ private fun SetupScreen(
             Text(status, color = DeepRed, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), textAlign = TextAlign.Center)
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    contactToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { contactToDelete = null },
+            title = { Text("Supprimer ce contact ?") },
+            text = {
+                Text("Le contact ${target.displayName} et ses enregistrements vocaux seront supprimés définitivement.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDeleteContact(target.id)
+                        contactToDelete = null
+                    }
+                ) {
+                    Text("Supprimer", color = DeepRed)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { contactToDelete = null }) {
+                    Text("Annuler")
+                }
+            }
+        )
     }
 }
 
