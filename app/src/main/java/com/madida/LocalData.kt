@@ -51,6 +51,20 @@ internal class FamilyStore(context: android.content.Context) {
         prefs.edit().putString("contacts", gson.toJson(items)).apply()
     }
 
+    fun loadRejectedSamples(): List<String> {
+        val raw = prefs.getString("rejected_voice_samples", "[]") ?: "[]"
+        return try {
+            val type = object : TypeToken<List<String>>() {}.type
+            gson.fromJson<List<String>>(raw, type)?.filter { it.isNotBlank() } ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+    }
+
+    fun saveRejectedSamples(paths: List<String>) {
+        prefs.edit().putString("rejected_voice_samples", gson.toJson(paths)).apply()
+    }
+
     fun loadPrompts(): VoicePrompts {
         val raw = prefs.getString("prompts", "{}") ?: "{}"
         return try { gson.fromJson(raw, VoicePrompts::class.java) ?: VoicePrompts() }
