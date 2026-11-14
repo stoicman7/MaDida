@@ -73,17 +73,21 @@ internal object LocalVoiceMatcher {
                 .distinct()
                 .map(::File)
 
-            // Open-set protection needs several examples to learn how much this
-            // particular speaker varies when saying this particular contact name.
+            // Every contact must be calibrated; otherwise the nearest-contact search
+            // would ignore part of the family list and could suggest the wrong person.
             val references = sampleFiles.mapNotNull(::getFeatures)
-            if (references.size < 3) continue
+            if (references.size < 3) {
+                return ContactDecision(status = "need_calibration")
+            }
 
             val queryDistances = references
                 .map { reference -> dtwDistance(query, reference) }
                 .filter { it.isFinite() }
                 .sorted()
 
-            if (queryDistances.size < 3) continue
+            if (queryDistances.size < 3) {
+                return ContactDecision(status = "need_calibration")
+            }
 
             val genuineDistances = references.indices.mapNotNull { index ->
                 val otherDistances = references.indices
@@ -95,7 +99,9 @@ internal object LocalVoiceMatcher {
                 if (otherDistances.size < 2) null else averageBest(otherDistances)
             }.filter { it.isFinite() }
 
-            if (genuineDistances.size < 3) continue
+            if (genuineDistances.size < 3) {
+                return ContactDecision(status = "need_calibration")
+            }
 
             val center = median(genuineDistances)
             val deviations = genuineDistances.map { abs(it - center) }
