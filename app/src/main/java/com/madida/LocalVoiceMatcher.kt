@@ -34,7 +34,7 @@ internal object LocalVoiceMatcher {
     private const val FFT_SIZE = 512
     private const val MEL_FILTERS = 32
     private const val MIN_NAME_SAMPLES = 3
-    private const val MAX_REFERENCES_PER_DECISION = 3
+    private const val MAX_REFERENCES_PER_DECISION = 2
 
     private data class CacheEntry(
         val modified: Long,
