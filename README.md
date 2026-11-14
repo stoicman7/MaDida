@@ -8,13 +8,15 @@ MaDida ne cherche pas à comprendre une conversation complète ni à convertir l
 
 Cette approche est indépendante de la langue et de son orthographe : elle compare la façon dont la personne prononce le nom. Elle est adaptée à un petit vocabulaire fermé de noms de contacts, mais elle n'est pas un moteur général de reconnaissance vocale et ne doit pas être présentée comme infaillible.
 
-MaDida utilise une identification par classement : elle compare l’enregistrement aux exemples de tous les contacts, puis sélectionne celui dont la distance acoustique est la plus faible. Elle ne rejette pas le meilleur candidat parce que son score serait élevé ou parce que deux contacts seraient proches. Le contact choisi est toujours annoncé et l’appel reste bloqué jusqu’à une confirmation explicite.
+MaDida classe les contacts par distance acoustique et dispose maintenant d'un garde-fou contre les sons inconnus. Pour chaque contact, elle compare les distances entre ses propres exemples afin d'estimer la variabilité naturelle de sa prononciation. Si le nouveau son est trop éloigné du profil du meilleur candidat, aucun contact n'est proposé. Cette limite est adaptative et doit encore être vérifiée avec la voix réelle. Le contact retenu est toujours annoncé et l'appel reste bloqué jusqu'à une confirmation explicite.
 
 ## Fonctionnalités
 
 - Interface Android native en français, avec un grand bouton microphone.
 - Nom d'application et identité Android : **MaDida**.
 - Nombre de contacts non limité artificiellement par le code.
+- Suppression d'un contact avec confirmation et suppression de ses enregistrements vocaux associés.
+- Suppression indépendante de chaque prononciation, des audios d'annonce, des réponses OUI/NON et des messages d'instruction.
 - Enregistrement d'autant d'exemples de prononciation que nécessaire pour chaque contact.
 - Comparaison locale de tous les exemples disponibles ; aucun extrait audio n'est envoyé sur Internet.
 - Réponses vocales personnalisées OUI et NON, elles aussi apprises avec plusieurs enregistrements.
@@ -26,18 +28,18 @@ MaDida utilise une identification par classement : elle compare l’enregistreme
 
 ## Limites à connaître
 
-1. **La reconnaissance n'est pas encore validée sur la voix de la grand-mère.** MFCC + DTW classe les contacts par proximité acoustique ; il choisit toujours le meilleur candidat disponible. Si le nom prononcé ne correspond à aucun contact, il choisira malgré tout le moins éloigné : la confirmation humaine est donc indispensable.
-2. Enregistrer au moins **un exemple propre pour chaque contact** est nécessaire pour comparer toute la liste. En pratique, enregistrer 5 à 8 fois avec de petites variations naturelles améliore la couverture des prononciations.
+1. **La reconnaissance n'est pas encore validée sur la voix de la grand-mère.** MFCC + DTW combine le classement des contacts et un garde-fou adaptatif construit à partir des exemples enregistrés. Un son trop éloigné des prononciations connues doit être rejeté ; les seuils restent à valider avec des essais positifs et des sons volontairement incorrects.
+2. Enregistrer au moins **trois exemples valides pour chaque contact** est nécessaire pour activer le garde-fou et comparer toute la liste. En pratique, enregistrer 5 à 8 fois avec de petites variations naturelles est préférable.
 3. Enregistrer au moins **deux exemples OUI et deux exemples NON** pour activer la confirmation entièrement vocale. Les boutons restent disponibles.
-4. Les seuils de distance ne servent plus à rejeter un nom de contact : le moteur classe les contacts et choisit le plus proche. Les seuils restent utilisés pour distinguer les réponses vocales OUI et NON.
-5. Les contacts, échantillons et messages audio restent dans le stockage privé de l'application. La désinstallation efface ces données.
+4. La limite de rejet des sons inconnus est calculée séparément pour chaque contact à partir des distances entre ses propres exemples (médiane et dispersion robuste). Ce calcul est une heuristique à tester, pas une garantie mathématique.
+5. Les contacts, échantillons et messages audio restent dans le stockage privé de l'application. Chaque audio peut être supprimé indépendamment ; supprimer un contact efface aussi ses audios associés. La désinstallation efface toutes les données.
 6. Ce prototype ne doit pas être l'unique moyen de joindre les services d'urgence.
 
 ## Architecture
 
 - `MainActivity.kt` : interface, gestion des états et flux d'appel.
 - `LocalData.kt` : stockage local, enregistrement WAV et lecture des messages.
-- `LocalVoiceMatcher.kt` : lecture WAV, extraction MFCC + deltas, DTW et classement du contact le plus proche.
+- `LocalVoiceMatcher.kt` : lecture WAV, extraction MFCC + deltas, DTW, calibration par contact et rejet des sons inconnus.
 - `AndroidManifest.xml` : permissions microphone et téléphone uniquement ; aucune permission Internet.
 
 Aucun serveur, compte Google, clé API, backend Python ou service de reconnaissance cloud n'est nécessaire.
@@ -56,11 +58,11 @@ Le workflow utilise Java 17, Android SDK 35 et Gradle 8.10.2. Android Studio n'e
 
 1. Ouvre **MaDida**, puis **Réglages famille**.
 2. Ajoute les membres de la famille avec leur nom et leur numéro.
-3. Enregistre au moins une prononciation pour chacun des contacts ; cinq à huit prononciations par contact sont préférables.
+3. Enregistre au moins trois prononciations valides pour chacun des contacts ; cinq à huit sont préférables pour stabiliser le garde-fou.
 4. Enregistre le nom à annoncer pendant la confirmation avec la voix d'un membre de la famille (facultatif mais recommandé).
 5. Enregistre au moins deux exemples de sa réponse OUI et deux de sa réponse NON.
 6. Enregistre les quatre messages vocaux en kabyle de Béjaïa : demander qui appeler, demander confirmation, demander de répéter et annoncer qu'un nom n'a pas été trouvé.
-7. Utilise le bouton **Tester la reconnaissance (sans appeler)** pour vérifier quel contact est classé en premier. Même un nom absent du répertoire sera rapproché du contact le plus similaire : vérifie toujours le nom annoncé avant de confirmer.
+7. Utilise le bouton **Tester la reconnaissance (sans appeler)** pour vérifier les noms connus et essayer volontairement des sons qui ne correspondent à aucun contact. Ces sons doivent être rejetés. Vérifie toujours le nom annoncé avant de confirmer.
 8. Teste les appels avec un proche avant de confier le téléphone à la grand-mère.
 
 ## Appel et sécurité
