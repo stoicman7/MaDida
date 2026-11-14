@@ -80,6 +80,10 @@ internal object LocalVoiceMatcher {
             scores.add(contact to averageBest(distances))
         }
 
+        if (scores.isEmpty()) {
+            return ContactDecision(status = "need_enrollment")
+        }
+
         val ranked = scores.sortedBy { it.second }
         val best = ranked.first()
         val secondDistance = ranked.getOrNull(1)?.second ?: Double.POSITIVE_INFINITY
