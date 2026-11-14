@@ -56,48 +56,39 @@ internal object LocalVoiceMatcher {
         val query = getFeatures(audioFile)
             ?: return ContactDecision(status = "audio_invalid")
 
-        val scores = contacts.mapNotNull { contact ->
-            val samplePaths = contact.samplePaths.filter { it.isNotBlank() }.distinct()
-            if (samplePaths.size < MIN_NAME_SAMPLES) return@mapNotNull null
-
-            val distances = samplePaths.mapNotNull sampleLoop@{ path ->
-                val reference = getFeatures(File(path)) ?: return@sampleLoop null
-                dtwDistance(query, reference)
-            }.filter { it.isFinite() }.sorted()
-
-            if (distances.size < MIN_NAME_SAMPLES) {
-                null
-            } else {
-                contact to averageBest(distances)
-            }
-        }.sortedBy { it.second }
-
-        if (scores.isEmpty()) {
+        if (contacts.isEmpty()) {
             return ContactDecision(status = "need_enrollment")
         }
 
-        val best = scores.first()
-        val secondDistance = scores.getOrNull(1)?.second ?: Double.POSITIVE_INFINITY
+        // Closed-set identification: every saved contact must have at least one usable
+        // enrollment sample, then the closest candidate always wins. We deliberately do not
+        // reject a candidate using an absolute distance or a minimum margin.
+        val scores = mutableListOf<Pair<FamilyContact, Double>>()
+
+        for (contact in contacts) {
+            val samplePaths = contact.samplePaths.filter { it.isNotBlank() }.distinct()
+            if (samplePaths.isEmpty()) {
+                return ContactDecision(status = "need_enrollment")
+            }
+
+            val distances = samplePaths.mapNotNull { path ->
+                getFeatures(File(path))?.let { reference -> dtwDistance(query, reference) }
+            }.filter { it.isFinite() }.sorted()
+
+            if (distances.isEmpty()) {
+                return ContactDecision(status = "need_enrollment")
+            }
+
+            scores.add(contact to averageBest(distances))
+        }
+
+        val ranked = scores.sortedBy { it.second }
+        val best = ranked.first()
+        val secondDistance = ranked.getOrNull(1)?.second ?: Double.POSITIVE_INFINITY
         val margin = secondDistance - best.second
 
-        if (!best.second.isFinite() || best.second > MAX_DISTANCE) {
-            return ContactDecision(
-                status = "no_match",
-                bestDistance = best.second,
-                margin = margin,
-                bestCandidate = best.first
-            )
-        }
-
-        if (margin < MIN_MARGIN) {
-            return ContactDecision(
-                status = "ambiguous",
-                bestDistance = best.second,
-                margin = margin,
-                bestCandidate = best.first
-            )
-        }
-
+        // A contact is selected even when every score is poor or the top scores are close.
+        // The calling flow still announces the candidate and waits for explicit confirmation.
         return ContactDecision(
             contact = best.first,
             status = "match",
