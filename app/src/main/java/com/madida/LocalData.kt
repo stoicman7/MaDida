@@ -84,74 +84,165 @@ internal class SimpleAudioRecorder {
     private var audioRecord: AudioRecord? = null
     private var recordingThread: Thread? = null
     private var currentFile: File? = null
+    private var failureListener: ((String) -> Unit)? = null
     private val running = AtomicBoolean(false)
+
     @Volatile private var dataBytes: Long = 0
     @Volatile private var recordingFailure: String? = null
 
-    fun start(file: File) {
+    @Synchronized
+    fun start(file: File, onFailure: (String) -> Unit = {}) {
         stopQuietly()
         file.parentFile?.mkdirs()
-        val minBuffer = AudioRecord.getMinBufferSize(SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
-        if (minBuffer <= 0) throw IllegalStateException("Le microphone ne prend pas en charge le format audio requis.")
-        val bufferSize = maxOf(minBuffer * 2, 8192)
-        val recorder = AudioRecord(
-            MediaRecorder.AudioSource.MIC,
+
+        val minBuffer = AudioRecord.getMinBufferSize(
             SAMPLE_RATE,
             CHANNEL_CONFIG,
-            AUDIO_FORMAT,
-            bufferSize
+            AUDIO_FORMAT
         )
-        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
-            recorder.release()
-            throw IllegalStateException("Impossible d'initialiser le microphone.")
+        if (minBuffer <= 0) {
+            throw IllegalStateException("Le microphone ne prend pas en charge le format audio requis.")
         }
 
-        currentFile = file
-        dataBytes = 0
-        recordingFailure = null
-        running.set(true)
-        audioRecord = recorder
-        recorder.startRecording()
+        val bufferSize = maxOf(minBuffer * 2, 8192)
+        var recorder: AudioRecord? = null
 
-        recordingThread = Thread({
-            try {
-                FileOutputStream(file).use { output ->
-                    output.write(ByteArray(44)) // WAV header is filled after recording.
-                    val buffer = ByteArray(bufferSize)
-                    while (running.get()) {
-                        val count = recorder.read(buffer, 0, buffer.size)
-                        if (count > 0) {
-                            output.write(buffer, 0, count)
-                            dataBytes += count
-                        } else if (count < 0) {
-                            if (running.get()) recordingFailure = "Erreur pendant la capture audio ($count)."
-                            break
-                        }
-                    }
-                    output.flush()
-                }
-            } catch (e: Exception) {
-                recordingFailure = e.localizedMessage ?: "Erreur d'enregistrement audio."
+        try {
+            recorder = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                SAMPLE_RATE,
+                CHANNEL_CONFIG,
+                AUDIO_FORMAT,
+                bufferSize
+            )
+
+            if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+                throw IllegalStateException("Impossible d'initialiser le microphone.")
             }
-        }, "MaDida-AudioRecorder").apply { start() }
+
+            recorder.startRecording()
+            if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                throw IllegalStateException("Le microphone n'a pas démarré correctement.")
+            }
+
+            currentFile = file
+            dataBytes = 0
+            recordingFailure = null
+            failureListener = onFailure
+            running.set(true)
+            audioRecord = recorder
+
+            val activeRecorder = recorder
+            recordingThread = Thread({
+                try {
+                    FileOutputStream(file).use { output ->
+                        output.write(ByteArray(44))
+                        val buffer = ByteArray(bufferSize)
+
+                        while (running.get()) {
+                            val count = activeRecorder.read(buffer, 0, buffer.size)
+                            if (count > 0) {
+                                output.write(buffer, 0, count)
+                                dataBytes += count
+                            } else if (count < 0) {
+                                reportRecordingFailure(
+                                    "Le microphone a interrompu l'enregistrement ($count)."
+                                )
+                                break
+                            }
+                        }
+                        output.flush()
+                    }
+                } catch (e: Exception) {
+                    reportRecordingFailure(
+                        e.localizedMessage ?: "Erreur pendant la capture audio."
+                    )
+                }
+            }, "MaDida-AudioRecorder").apply { start() }
+        } catch (e: Exception) {
+            running.set(false)
+            try {
+                recorder?.let {
+                    if (it.recordingState == AudioRecord.RECORDSTATE_RECORDING) it.stop()
+                }
+            } catch (_: Exception) { }
+            try { recorder?.release() } catch (_: Exception) { }
+
+            audioRecord = null
+            recordingThread = null
+            currentFile = null
+            failureListener = null
+            file.delete()
+
+            throw IllegalStateException(
+                e.localizedMessage ?: "Impossible de démarrer le microphone.",
+                e
+            )
+        }
     }
 
+    private fun reportRecordingFailure(message: String) {
+        recordingFailure = message
+        running.set(false)
+        failureListener?.invoke(message)
+    }
+
+    @Synchronized
     fun stop(): File? {
         val file = currentFile ?: return null
         running.set(false)
-        try { audioRecord?.stop() } catch (_: Exception) { }
+
+        val activeRecorder = audioRecord
+        try {
+            if (activeRecorder?.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                activeRecorder.stop()
+            }
+        } catch (_: Exception) { }
+
         val thread = recordingThread
-        try { thread?.join(4000) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
-        try { audioRecord?.release() } catch (_: Exception) { }
-        try { thread?.join(1000) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        try {
+            thread?.join(3000)
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+        }
+
+        try { activeRecorder?.release() } catch (_: Exception) { }
+
+        if (thread?.isAlive == true) {
+            try {
+                thread.join(2000)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+        }
+
         audioRecord = null
         recordingThread = null
         currentFile = null
+        failureListener = null
 
-        if (thread?.isAlive == true) throw IllegalStateException("L'enregistrement audio ne s'est pas arrêté correctement.")
-        if (dataBytes <= 0) return null
-        recordingFailure?.let { throw IllegalStateException(it) }
-        writeWavHeader(file, dataBytes)
+        if (thread?.isAlive == true) {
+            file.delete()
+            throw IllegalStateException("Le microphone ne s'est pas arrêté correctement. Réessayez.")
+        }
+
+        if (dataBytes <= 0) {
+            file.delete()
+            return null
+        }
+
+        recordingFailure?.let {
+            file.delete()
+            throw IllegalStateException(it)
+        }
+
+        try {
+            writeWavHeader(file, dataBytes)
+        } catch (e: Exception) {
+            file.delete()
+            throw IllegalStateException("Impossible de finaliser le fichier audio.", e)
+        }
+
         return file
     }
 
@@ -220,8 +311,8 @@ internal class PromptPlayer {
             }
             player.prepare()
             player.start()
-        } catch (_: IOException) {
-            active?.release()
+        } catch (_: Exception) {
+            try { active?.release() } catch (_: Exception) { }
             active = null
             playAt(paths, index + 1)
         }
