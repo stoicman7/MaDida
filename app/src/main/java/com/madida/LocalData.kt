@@ -8,7 +8,6 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import java.io.File
 import java.io.FileOutputStream
-import java.io.IOException
 import java.io.RandomAccessFile
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
@@ -124,6 +123,7 @@ internal class SimpleAudioRecorder {
             if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                 throw IllegalStateException("Le microphone n'a pas démarré correctement.")
             }
+            val activeRecorder = recorder
 
             currentFile = file
             dataBytes = 0
@@ -132,7 +132,6 @@ internal class SimpleAudioRecorder {
             running.set(true)
             audioRecord = recorder
 
-            val activeRecorder = recorder
             recordingThread = Thread({
                 try {
                     FileOutputStream(file).use { output ->
