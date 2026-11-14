@@ -682,6 +682,10 @@ private fun SetupScreen(
     onAddContact: (String, String, String) -> Unit,
     onSelectContact: (String) -> Unit,
     onDeleteContact: (String) -> Unit,
+    onDeleteContactSample: (String, String) -> Unit,
+    onDeleteContactAnnouncement: (String) -> Unit,
+    onDeleteResponseSample: (String, String) -> Unit,
+    onDeletePrompt: (String) -> Unit,
     onRecordSample: (String) -> Unit,
     onTestRecognition: () -> Unit,
     onRecordAnnouncement: (String) -> Unit,
@@ -693,6 +697,7 @@ private fun SetupScreen(
     var phone by androidx.compose.runtime.remember { mutableStateOf("") }
     var aliases by androidx.compose.runtime.remember { mutableStateOf("") }
     var contactToDelete by androidx.compose.runtime.remember { mutableStateOf<FamilyContact?>(null) }
+    var audioToDelete by androidx.compose.runtime.remember { mutableStateOf<PendingAudioDeletion?>(null) }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize().padding(18.dp),
@@ -722,12 +727,12 @@ private fun SetupScreen(
         }
         item {
             Text("Enregistrer les prononciations", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
-            Text("Enregistrez au moins une prononciation de chaque contact pour que MaDida puisse les comparer tous. 5 à 8 prononciations par contact sont recommandées.", color = Color.DarkGray, fontSize = 13.sp)
+            Text("Pour activer le garde-fou contre les sons inconnus, enregistrez au moins trois prononciations par contact. Cinq à huit sont préférables.", color = Color.DarkGray, fontSize = 13.sp)
             val testingNow = recording && recordingTask == RecordingTask.TEST_NAME
             OutlinedButton(
                 onClick = { if (testingNow) onStopRecording() else onTestRecognition() },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !recording || testingNow && contacts.isNotEmpty() && contacts.all { it.samplePaths.isNotEmpty() }
+                enabled = !recording || testingNow && contacts.any { it.samplePaths.size >= 3 }
             ) {
                 Icon(if (testingNow) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
@@ -762,6 +767,17 @@ private fun SetupScreen(
                             )
                         }
                     }
+                    contact.samplePaths.forEachIndexed { index, audioPath ->
+                        AudioSampleRow(
+                            label = "Prononciation ${index + 1}",
+                            onDelete = {
+                                audioToDelete = PendingAudioDeletion("la prononciation ${index + 1} de ${contact.displayName}") {
+                                    onDeleteContactSample(contact.id, audioPath)
+                                }
+                            },
+                            enabled = !recording
+                        )
+                    }
                     val recordingSample = recording &&
                         recordingTask == RecordingTask.ENROLLMENT &&
                         selectedContactId == contact.id
@@ -774,7 +790,19 @@ private fun SetupScreen(
                         Spacer(Modifier.width(8.dp))
                         Text(if (recordingSample) "Arrêter" else "Ajouter une prononciation")
                     }
-                    Text(if (contact.announcementPath != null) "Nom à annoncer : enregistré" else "Nom à annoncer : non enregistré", color = Color.DarkGray, fontSize = 12.sp)
+                    if (contact.announcementPath != null) {
+                        AudioSampleRow(
+                            label = "Audio du nom à annoncer",
+                            onDelete = {
+                                audioToDelete = PendingAudioDeletion("l'audio d'annonce de ${contact.displayName}") {
+                                    onDeleteContactAnnouncement(contact.id)
+                                }
+                            },
+                            enabled = !recording
+                        )
+                    } else {
+                        Text("Nom à annoncer : non enregistré", color = Color.DarkGray, fontSize = 12.sp)
+                    }
                     val recordingAnnouncement = recording &&
                         recordingTask == RecordingTask.CONTACT_LABEL &&
                         selectedContactId == contact.id
@@ -796,6 +824,17 @@ private fun SetupScreen(
                     Text("Réponses vocales de votre grand-mère", fontWeight = FontWeight.Bold, fontSize = 18.sp)
                     Text("Pour confirmer un appel sans toucher l'écran, enregistrez au moins deux façons naturelles de dire OUI et deux de dire NON, dans sa variante de kabyle.", color = Color.DarkGray, fontSize = 13.sp)
                     Text("OUI : ${responses.yesPaths.size} exemples  •  NON : ${responses.noPaths.size} exemples", color = DeepRed, fontWeight = FontWeight.SemiBold)
+                    responses.yesPaths.forEachIndexed { index, audioPath ->
+                        AudioSampleRow(
+                            label = "OUI — exemple ${index + 1}",
+                            onDelete = {
+                                audioToDelete = PendingAudioDeletion("cet exemple de réponse OUI") {
+                                    onDeleteResponseSample("yes", audioPath)
+                                }
+                            },
+                            enabled = !recording
+                        )
+                    }
                     val recordingYes = recording && recordingTask == RecordingTask.YES_ENROLLMENT
                     OutlinedButton(
                         onClick = { if (recordingYes) onStopRecording() else onRecordResponse("yes") },
@@ -805,6 +844,17 @@ private fun SetupScreen(
                         Icon(if (recordingYes) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
                         Text(if (recordingYes) "Arrêter" else "Enregistrer un OUI")
+                    }
+                    responses.noPaths.forEachIndexed { index, audioPath ->
+                        AudioSampleRow(
+                            label = "NON — exemple ${index + 1}",
+                            onDelete = {
+                                audioToDelete = PendingAudioDeletion("cet exemple de réponse NON") {
+                                    onDeleteResponseSample("no", audioPath)
+                                }
+                            },
+                            enabled = !recording
+                        )
                     }
                     val recordingNo = recording && recordingTask == RecordingTask.NO_ENROLLMENT
                     OutlinedButton(
@@ -823,14 +873,55 @@ private fun SetupScreen(
             Text("Enregistrer les phrases en kabyle", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
             Text("Un membre de la famille peut enregistrer ces phrases dans la variante de Béjaïa. L'application les fera écouter à votre grand-mère.", color = Color.DarkGray, fontSize = 13.sp)
         }
-        item { PromptRecordRow("Demander qui appeler", "askWho", prompts.askWho, recording, recordingTask, onRecordPrompt, onStopRecording) }
-        item { PromptRecordRow("Demander confirmation", "confirm", prompts.confirm, recording, recordingTask, onRecordPrompt, onStopRecording) }
-        item { PromptRecordRow("Demander de répéter", "repeat", prompts.repeat, recording, recordingTask, onRecordPrompt, onStopRecording) }
-        item { PromptRecordRow("Nom non reconnu", "notFound", prompts.notFound, recording, recordingTask, onRecordPrompt, onStopRecording) }
+        item {
+            PromptRecordRow(
+                "Demander qui appeler", "askWho", prompts.askWho, recording, recordingTask,
+                onRecordPrompt, onStopRecording,
+                onDelete = { audioToDelete = PendingAudioDeletion("l'audio « Demander qui appeler »") { onDeletePrompt("askWho") } }
+            )
+        }
+        item {
+            PromptRecordRow(
+                "Demander confirmation", "confirm", prompts.confirm, recording, recordingTask,
+                onRecordPrompt, onStopRecording,
+                onDelete = { audioToDelete = PendingAudioDeletion("l'audio « Demander confirmation »") { onDeletePrompt("confirm") } }
+            )
+        }
+        item {
+            PromptRecordRow(
+                "Demander de répéter", "repeat", prompts.repeat, recording, recordingTask,
+                onRecordPrompt, onStopRecording,
+                onDelete = { audioToDelete = PendingAudioDeletion("l'audio « Demander de répéter »") { onDeletePrompt("repeat") } }
+            )
+        }
+        item {
+            PromptRecordRow(
+                "Nom non reconnu", "notFound", prompts.notFound, recording, recordingTask,
+                onRecordPrompt, onStopRecording,
+                onDelete = { audioToDelete = PendingAudioDeletion("l'audio « Nom non reconnu »") { onDeletePrompt("notFound") } }
+            )
+        }
         item {
             Text(status, color = DeepRed, fontSize = 14.sp, modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp), textAlign = TextAlign.Center)
             Spacer(Modifier.height(24.dp))
         }
+    }
+
+    audioToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { audioToDelete = null },
+            title = { Text("Supprimer cet audio ?") },
+            text = { Text("Voulez-vous supprimer définitivement ${target.label} ? Le contact ou la fonction associée sera conservé.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    target.onDelete()
+                    audioToDelete = null
+                }) { Text("Supprimer", color = DeepRed) }
+            },
+            dismissButton = {
+                TextButton(onClick = { audioToDelete = null }) { Text("Annuler") }
+            }
+        )
     }
 
     contactToDelete?.let { target ->
@@ -859,6 +950,28 @@ private fun SetupScreen(
     }
 }
 
+private data class PendingAudioDeletion(
+    val label: String,
+    val onDelete: () -> Unit
+)
+
+@Composable
+private fun AudioSampleRow(
+    label: String,
+    onDelete: () -> Unit,
+    enabled: Boolean
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(label, modifier = Modifier.weight(1f), color = Color.DarkGray, fontSize = 13.sp)
+        IconButton(onClick = onDelete, enabled = enabled) {
+            Icon(Icons.Default.Delete, contentDescription = "Supprimer $label", tint = DeepRed)
+        }
+    }
+}
+
 @Composable
 private fun PromptRecordRow(
     title: String,
@@ -867,7 +980,8 @@ private fun PromptRecordRow(
     recording: Boolean,
     recordingTask: RecordingTask,
     onRecord: (String) -> Unit,
-    onStop: () -> Unit
+    onStop: () -> Unit,
+    onDelete: (() -> Unit)? = null
 ) {
     Card(colors = CardDefaults.cardColors(containerColor = Color.White), shape = RoundedCornerShape(12.dp)) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
@@ -875,10 +989,19 @@ private fun PromptRecordRow(
                 Text(title, fontWeight = FontWeight.SemiBold)
                 Text(if (path != null) "Enregistrée" else "Pas encore enregistrée", color = Color.Gray, fontSize = 12.sp)
             }
-            OutlinedButton(
-                onClick = { if (recording) onStop() else onRecord(key) },
-                enabled = !recording || recordingTask == RecordingTask.fromPromptKey(key)
-            ) { Text(if (recording && recordingTask == RecordingTask.fromPromptKey(key)) "STOP" else "Enregistrer") }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedButton(
+                    onClick = { if (recording && recordingTask == RecordingTask.fromPromptKey(key)) onStop() else if (!recording) onRecord(key) },
+                    enabled = !recording || recordingTask == RecordingTask.fromPromptKey(key)
+                ) {
+                    Text(if (recording && recordingTask == RecordingTask.fromPromptKey(key)) "STOP" else "Enregistrer")
+                }
+                if (path != null && onDelete != null) {
+                    IconButton(onClick = onDelete, enabled = !recording) {
+                        Icon(Icons.Default.Delete, contentDescription = "Supprimer l'audio", tint = DeepRed)
+                    }
+                }
+            }
         }
     }
 }
