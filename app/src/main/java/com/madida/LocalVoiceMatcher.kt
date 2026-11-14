@@ -51,6 +51,12 @@ internal object LocalVoiceMatcher {
         val bestCandidate: FamilyContact? = null
     )
 
+    private data class ContactScore(
+        val contact: FamilyContact,
+        val distance: Double,
+        val rejectionLimit: Double
+    )
+
     fun identify(audioFile: File, contacts: List<FamilyContact>): ContactDecision {
         val query = getFeatures(audioFile)
             ?: return ContactDecision(status = "audio_invalid")
@@ -59,44 +65,94 @@ internal object LocalVoiceMatcher {
             return ContactDecision(status = "need_enrollment")
         }
 
-        // Closed-set identification: compare every contact that has at least one usable
-        // enrollment sample. Unenrolled or damaged entries are skipped; the closest usable
-        // candidate always wins, without an absolute-distance or minimum-margin rejection.
-        val scores = mutableListOf<Pair<FamilyContact, Double>>()
+        val scores = mutableListOf<ContactScore>()
 
         for (contact in contacts) {
-            val samplePaths = contact.samplePaths.filter { it.isNotBlank() }.distinct()
-            // A contact that has not been enrolled yet, or whose recordings are missing,
-            // must not block the other enrolled contacts from being compared.
-            if (samplePaths.isEmpty()) continue
+            val sampleFiles = contact.samplePaths
+                .filter { it.isNotBlank() }
+                .distinct()
+                .map(::File)
 
-            val distances = samplePaths.mapNotNull { path ->
-                getFeatures(File(path))?.let { reference -> dtwDistance(query, reference) }
-            }.filter { it.isFinite() }.sorted()
+            // Open-set protection needs several examples to learn how much this
+            // particular speaker varies when saying this particular contact name.
+            val references = sampleFiles.mapNotNull(::getFeatures)
+            if (references.size < 3) continue
 
-            if (distances.isEmpty()) continue
+            val queryDistances = references
+                .map { reference -> dtwDistance(query, reference) }
+                .filter { it.isFinite() }
+                .sorted()
 
-            scores.add(contact to averageBest(distances))
+            if (queryDistances.size < 3) continue
+
+            val genuineDistances = references.indices.mapNotNull { index ->
+                val otherDistances = references.indices
+                    .filter { it != index }
+                    .map { other -> dtwDistance(references[index], references[other]) }
+                    .filter { it.isFinite() }
+                    .sorted()
+
+                if (otherDistances.size < 2) null else averageBest(otherDistances)
+            }.filter { it.isFinite() }
+
+            if (genuineDistances.size < 3) continue
+
+            val center = median(genuineDistances)
+            val deviations = genuineDistances.map { abs(it - center) }
+            val mad = median(deviations)
+
+            // Speaker- and contact-specific rejection limit derived from the enrolled
+            // examples, not a universal raw-distance constant.
+            val tolerance = max(3.0 * mad, max(center * 0.35, 0.01))
+            val rejectionLimit = center + tolerance
+
+            scores.add(
+                ContactScore(
+                    contact = contact,
+                    distance = averageBest(queryDistances),
+                    rejectionLimit = rejectionLimit
+                )
+            )
         }
 
         if (scores.isEmpty()) {
-            return ContactDecision(status = "need_enrollment")
+            return ContactDecision(status = "need_calibration")
         }
 
-        val ranked = scores.sortedBy { it.second }
+        val ranked = scores.sortedBy { it.distance }
         val best = ranked.first()
-        val secondDistance = ranked.getOrNull(1)?.second ?: Double.POSITIVE_INFINITY
-        val margin = secondDistance - best.second
+        val secondDistance = ranked.getOrNull(1)?.distance ?: Double.POSITIVE_INFINITY
+        val margin = secondDistance - best.distance
 
-        // A contact is selected even when every score is poor or the top scores are close.
-        // The calling flow still announces the candidate and waits for explicit confirmation.
+        // Reject sounds that are outside the natural variability of every enrolled
+        // example for the closest contact. A valid nearest contact is still selected.
+        if (best.distance > best.rejectionLimit) {
+            return ContactDecision(
+                status = "unknown_sound",
+                bestDistance = best.distance,
+                margin = margin,
+                bestCandidate = best.contact
+            )
+        }
+
         return ContactDecision(
-            contact = best.first,
+            contact = best.contact,
             status = "match",
-            bestDistance = best.second,
+            bestDistance = best.distance,
             margin = margin,
-            bestCandidate = best.first
+            bestCandidate = best.contact
         )
+    }
+
+    private fun median(values: List<Double>): Double {
+        if (values.isEmpty()) return Double.POSITIVE_INFINITY
+        val sorted = values.sorted()
+        val middle = sorted.size / 2
+        return if (sorted.size % 2 == 0) {
+            (sorted[middle - 1] + sorted[middle]) / 2.0
+        } else {
+            sorted[middle]
+        }
     }
 
     /** Returns yes, no or unclear after comparing the reply with locally enrolled examples. */
