@@ -443,10 +443,11 @@ class MainActivity : ComponentActivity() {
                     playConfirmationSequence(contact)
                 } else {
                     matchedContact = null
-                    status = if (decision.status == "need_enrollment") {
-                        "Enregistrez au moins une prononciation pour un contact."
-                    } else {
-                        "Je n'ai pas pu comparer les prononciations. Réessayez."
+                    status = when (decision.status) {
+                        "need_enrollment" -> "Ajoutez d'abord un contact dans les réglages famille."
+                        "need_calibration" -> "Enregistrez au moins trois prononciations par contact pour activer le garde-fou."
+                        "unknown_sound" -> "Aucun contact ne correspond suffisamment à ce son. Répétez le nom."
+                        else -> "Je n'ai pas pu comparer les prononciations. Réessayez."
                     }
                     playPrompt(prompts.repeat ?: prompts.notFound)
                 }
