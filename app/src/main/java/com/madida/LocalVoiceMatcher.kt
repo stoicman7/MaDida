@@ -39,6 +39,11 @@ internal object LocalVoiceMatcher {
     private data class CacheEntry(val modified: Long, val size: Long, val features: Array<FloatArray>)
     private val cache = LinkedHashMap<String, CacheEntry>(64, 0.75f, true)
 
+    // Removing an audio sample also removes its cached acoustic features.
+    fun invalidate(path: String) {
+        synchronized(cache) { cache.remove(File(path).absolutePath) }
+    }
+
     data class ContactDecision(
         val contact: FamilyContact? = null,
         val status: String,
@@ -54,7 +59,8 @@ internal object LocalVoiceMatcher {
                 val reference = getFeatures(File(path)) ?: return@sampleLoop null
                 dtwDistance(query, reference)
             }.sorted()
-            if (distances.size < MIN_NAME_SAMPLES) null else contact to averageBest(distances)
+            // A single damaged/missing file should not invalidate the other enrolled examples.
+            if (distances.size < 2) null else contact to averageBest(distances)
         }.sortedBy { it.second }
 
         if (scores.isEmpty()) return ContactDecision(status = "need_enrollment")
