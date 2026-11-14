@@ -8,7 +8,7 @@ MaDida ne cherche pas à comprendre une conversation complète ni à convertir l
 
 Cette approche est indépendante de la langue et de son orthographe : elle compare la façon dont la personne prononce le nom. Elle est adaptée à un petit vocabulaire fermé de noms de contacts, mais elle n'est pas un moteur général de reconnaissance vocale et ne doit pas être présentée comme infaillible.
 
-La première version utilise des seuils prudents de correspondance. Ils devront être validés avec la voix réelle de la grand-mère, les noms de sa famille et le téléphone cible. Si le score est faible ou si deux contacts sont trop proches, MaDida demande de répéter au lieu de proposer un appel.
+MaDida utilise une identification par classement : elle compare l’enregistrement aux exemples de tous les contacts, puis sélectionne celui dont la distance acoustique est la plus faible. Elle ne rejette pas le meilleur candidat parce que son score serait élevé ou parce que deux contacts seraient proches. Le contact choisi est toujours annoncé et l’appel reste bloqué jusqu’à une confirmation explicite.
 
 ## Fonctionnalités
 
@@ -26,10 +26,10 @@ La première version utilise des seuils prudents de correspondance. Ils devront 
 
 ## Limites à connaître
 
-1. **La reconnaissance n'est pas encore validée sur la voix de la grand-mère.** MFCC + DTW est un moteur de comparaison acoustique local, pas un grand modèle neuronal. Des noms qui se ressemblent beaucoup, un bruit important ou une prononciation très différente des échantillons peuvent provoquer une hésitation ou une erreur.
-2. Enregistrer au moins **trois exemples propres par contact** est nécessaire pour que le contact soit éligible à la reconnaissance. En pratique, enregistrer 5 à 8 fois avec de petites variations naturelles est préférable.
+1. **La reconnaissance n'est pas encore validée sur la voix de la grand-mère.** MFCC + DTW classe les contacts par proximité acoustique ; il choisit toujours le meilleur candidat disponible. Si le nom prononcé ne correspond à aucun contact, il choisira malgré tout le moins éloigné : la confirmation humaine est donc indispensable.
+2. Enregistrer au moins **un exemple propre pour chaque contact** est nécessaire pour comparer toute la liste. En pratique, enregistrer 5 à 8 fois avec de petites variations naturelles améliore la couverture des prononciations.
 3. Enregistrer au moins **deux exemples OUI et deux exemples NON** pour activer la confirmation entièrement vocale. Les boutons restent disponibles.
-4. Les seuils `MAX_DISTANCE` et `MIN_MARGIN` dans `LocalVoiceMatcher.kt` sont des valeurs de départ. Il faut les calibrer avec des enregistrements positifs et négatifs de cette utilisatrice avant un usage régulier.
+4. Les seuils de distance ne servent plus à rejeter un nom de contact : le moteur classe les contacts et choisit le plus proche. Les seuils restent utilisés pour distinguer les réponses vocales OUI et NON.
 5. Les contacts, échantillons et messages audio restent dans le stockage privé de l'application. La désinstallation efface ces données.
 6. Ce prototype ne doit pas être l'unique moyen de joindre les services d'urgence.
 
@@ -37,7 +37,7 @@ La première version utilise des seuils prudents de correspondance. Ils devront 
 
 - `MainActivity.kt` : interface, gestion des états et flux d'appel.
 - `LocalData.kt` : stockage local, enregistrement WAV et lecture des messages.
-- `LocalVoiceMatcher.kt` : lecture WAV, extraction MFCC, normalisation, DTW et décisions conservatrices.
+- `LocalVoiceMatcher.kt` : lecture WAV, extraction MFCC + deltas, DTW et classement du contact le plus proche.
 - `AndroidManifest.xml` : permissions microphone et téléphone uniquement ; aucune permission Internet.
 
 Aucun serveur, compte Google, clé API, backend Python ou service de reconnaissance cloud n'est nécessaire.
@@ -56,11 +56,11 @@ Le workflow utilise Java 17, Android SDK 35 et Gradle 8.10.2. Android Studio n'e
 
 1. Ouvre **MaDida**, puis **Réglages famille**.
 2. Ajoute les membres de la famille avec leur nom et leur numéro.
-3. Sélectionne un contact et enregistre au moins trois, idéalement cinq à huit, prononciations du nom par la grand-mère.
+3. Enregistre au moins une prononciation pour chacun des contacts ; cinq à huit prononciations par contact sont préférables.
 4. Enregistre le nom à annoncer pendant la confirmation avec la voix d'un membre de la famille (facultatif mais recommandé).
 5. Enregistre au moins deux exemples de sa réponse OUI et deux de sa réponse NON.
 6. Enregistre les quatre messages vocaux en kabyle de Béjaïa : demander qui appeler, demander confirmation, demander de répéter et annoncer qu'un nom n'a pas été trouvé.
-7. Teste chaque contact plusieurs fois, puis teste aussi des noms qui ne sont PAS dans le répertoire. Vérifie que MaDida demande de répéter dans ces cas.
+7. Utilise le bouton **Tester la reconnaissance (sans appeler)** pour vérifier quel contact est classé en premier. Même un nom absent du répertoire sera rapproché du contact le plus similaire : vérifie toujours le nom annoncé avant de confirmer.
 8. Teste les appels avec un proche avant de confier le téléphone à la grand-mère.
 
 ## Appel et sécurité
