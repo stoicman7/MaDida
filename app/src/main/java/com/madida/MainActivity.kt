@@ -446,7 +446,7 @@ class MainActivity : ComponentActivity() {
                     matchedContact = null
                     status = when (decision.status) {
                         "need_enrollment" -> "Ajoutez d'abord un contact dans les réglages famille."
-                        "need_calibration" -> "Enregistrez au moins trois prononciations par contact pour activer le garde-fou."
+                        "need_calibration" -> "Enregistrez au moins trois prononciations valides pour chacun des contacts."
                         "unknown_sound" -> "Aucun contact ne correspond suffisamment à ce son. Répétez le nom."
                         else -> "Je n'ai pas pu comparer les prononciations. Réessayez."
                     }
@@ -474,7 +474,7 @@ class MainActivity : ComponentActivity() {
                 status = when (decision.status) {
                     "match" -> "TEST : contact reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
                     "unknown_sound" -> "TEST : son rejeté, aucun contact proposé. Aucun appel lancé."
-                    "need_calibration" -> "TEST : il faut au moins trois exemples valides pour un contact."
+                    "need_calibration" -> "TEST : il faut au moins trois exemples valides pour chaque contact."
                     "need_enrollment" -> "TEST : enregistrez au moins un contact."
                     else -> "TEST : enregistrement audio invalide. Réessayez."
                 }
@@ -735,7 +735,7 @@ private fun SetupScreen(
             OutlinedButton(
                 onClick = { if (testingNow) onStopRecording() else onTestRecognition() },
                 modifier = Modifier.fillMaxWidth(),
-                enabled = !recording || testingNow && contacts.any { it.samplePaths.size >= 3 }
+                enabled = !recording || testingNow && contacts.isNotEmpty() && contacts.all { it.samplePaths.size >= 3 }
             ) {
                 Icon(if (testingNow) Icons.Default.Stop else Icons.Default.Mic, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
