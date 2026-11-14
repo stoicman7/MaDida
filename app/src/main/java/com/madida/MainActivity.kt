@@ -322,7 +322,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 matchedContact = null
                 status = when (decision.status) {
-                    "need_enrollment" -> "Enregistrez au moins trois prononciations par contact dans les réglages famille."
+                    "need_enrollment" -> "Enregistrez au moins une prononciation pour chacun des contacts dans les réglages famille. 5 à 8 exemples sont recommandés."
                     "ambiguous" -> "Deux contacts se ressemblent. Répétez le nom plus clairement."
                     "no_match" -> "Je n'ai pas reconnu ce nom. Réessayez."
                     else -> "Je n'ai pas pu analyser cet enregistrement. Réessayez."
@@ -343,7 +343,7 @@ class MainActivity : ComponentActivity() {
                 "match" -> "TEST : nom reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
                 "ambiguous" -> "TEST : hésitation entre plusieurs contacts. Réessayez avec une prononciation plus distincte."
                 "no_match" -> "TEST : aucun nom suffisamment proche. Aucun appel lancé."
-                "need_enrollment" -> "TEST : ajoutez au moins trois prononciations valides par contact."
+                "need_enrollment" -> "TEST : enregistrez au moins une prononciation valide pour chaque contact."
                 else -> "TEST : enregistrement audio invalide. Réessayez."
             }
             LocalVoiceMatcher.forget(file)
@@ -576,8 +576,8 @@ private fun SetupScreen(
         }
         item {
             Text("Enregistrer les prononciations", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
-            Text("Sélectionnez une personne, puis demandez-lui de prononcer son nom au moins trois fois. Les enregistrements restent sur le téléphone et sont comparés localement, sans Internet.", color = Color.DarkGray, fontSize = 13.sp)
-            OutlinedButton(onClick = onTestRecognition, modifier = Modifier.fillMaxWidth(), enabled = !recording && contacts.any { it.samplePaths.size >= 3 }) {
+            Text("Enregistrez au moins une prononciation de chaque contact pour que MaDida puisse les comparer tous. 5 à 8 prononciations par contact sont recommandées.", color = Color.DarkGray, fontSize = 13.sp)
+            OutlinedButton(onClick = onTestRecognition, modifier = Modifier.fillMaxWidth(), enabled = !recording && contacts.isNotEmpty() && contacts.all { it.samplePaths.isNotEmpty() }) {
                 Icon(Icons.Default.Mic, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
                 Text("Tester la reconnaissance (sans appeler)")
