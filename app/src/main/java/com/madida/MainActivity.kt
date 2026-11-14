@@ -324,7 +324,7 @@ class MainActivity : ComponentActivity() {
             } else {
                 matchedContact = null
                 status = when (decision.status) {
-                    "need_enrollment" -> "Enregistrez au moins trois prononciations par contact dans les réglages famille."
+                    "need_enrollment" -> "Enregistrez au moins cinq prononciations par contact dans les réglages famille."
                     "ambiguous" -> "Deux contacts se ressemblent. Répétez le nom plus clairement."
                     "no_match" -> "Je n'ai pas reconnu ce nom. Réessayez."
                     else -> "Je n'ai pas pu analyser cet enregistrement. Réessayez."
@@ -623,7 +623,7 @@ private fun SetupScreen(
         }
         item {
             Text("Enregistrer les prononciations", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = DarkText)
-            Text("Sélectionnez une personne, puis demandez-lui de prononcer son nom au moins trois fois. Les enregistrements restent sur le téléphone et sont comparés localement, sans Internet.", color = Color.DarkGray, fontSize = 13.sp)
+            Text("Sélectionnez une personne, puis demandez-lui de prononcer son nom au moins cinq fois. Les enregistrements restent sur le téléphone et sont comparés localement, sans Internet.", color = Color.DarkGray, fontSize = 13.sp)
         }
         items(contacts, key = { it.id }) { contact ->
             val selected = selectedContactId == contact.id
