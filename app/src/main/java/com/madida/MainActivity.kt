@@ -366,69 +366,92 @@ class MainActivity : ComponentActivity() {
 
     private fun resolveSpokenContact(file: File) {
         lifecycleScope.launch {
-            status = "Recherche locale du contact…"
-            val decision = withContext(Dispatchers.Default) {
-                LocalVoiceMatcher.identify(file, contacts)
-            }
-            val contact = decision.contact
-            if (decision.status == "match" && contact != null) {
-                matchedContact = contact
-                status = "J'ai reconnu ${contact.displayName}. Confirmez avec votre voix ou les boutons."
-                playConfirmationSequence(contact)
-            } else {
-                matchedContact = null
-                status = when (decision.status) {
-                    "need_enrollment" -> "Enregistrez au moins une prononciation pour chacun des contacts dans les réglages famille. 5 à 8 exemples sont recommandés."
-                    "ambiguous" -> "Deux contacts se ressemblent. Répétez le nom plus clairement."
-                    "no_match" -> "Je n'ai pas reconnu ce nom. Réessayez."
-                    else -> "Je n'ai pas pu analyser cet enregistrement. Réessayez."
+            try {
+                status = "Recherche locale du contact…"
+                val decision = withContext(Dispatchers.Default) {
+                    LocalVoiceMatcher.identify(file, contacts)
                 }
+                val contact = decision.contact
+                if (decision.status == "match" && contact != null) {
+                    matchedContact = contact
+                    status = "J'ai reconnu ${contact.displayName}. Confirmez avec votre voix ou les boutons."
+                    playConfirmationSequence(contact)
+                } else {
+                    matchedContact = null
+                    status = if (decision.status == "need_enrollment") {
+                        "Enregistrez au moins une prononciation pour un contact."
+                    } else {
+                        "Je n'ai pas pu comparer les prononciations. Réessayez."
+                    }
+                    playPrompt(prompts.repeat ?: prompts.notFound)
+                }
+            } catch (_: Exception) {
+                matchedContact = null
+                status = "Erreur pendant la reconnaissance. Vous pouvez réessayer sans relancer l'application."
                 playPrompt(prompts.repeat ?: prompts.notFound)
+            } finally {
+                LocalVoiceMatcher.forget(file)
+                file.delete()
             }
         }
     }
 
     private fun testSpokenContact(file: File) {
         lifecycleScope.launch {
-            status = "Test de reconnaissance en cours… aucun appel ne sera lancé."
-            val decision = withContext(Dispatchers.Default) {
-                LocalVoiceMatcher.identify(file, contacts)
+            try {
+                status = "Test de reconnaissance en cours… aucun appel ne sera lancé."
+                val decision = withContext(Dispatchers.Default) {
+                    LocalVoiceMatcher.identify(file, contacts)
+                }
+                val candidate = decision.contact ?: decision.bestCandidate
+                status = when (decision.status) {
+                    "match" -> "TEST : nom reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
+                    "need_enrollment" -> "TEST : enregistrez une prononciation pour au moins un contact."
+                    else -> "TEST : enregistrement audio invalide. Réessayez."
+                }
+            } catch (_: Exception) {
+                status = "Erreur pendant le test. Réessayez sans relancer l'application."
+            } finally {
+                LocalVoiceMatcher.forget(file)
+                file.delete()
             }
-            val candidate = decision.contact ?: decision.bestCandidate
-            status = when (decision.status) {
-                "match" -> "TEST : nom reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
-                "ambiguous" -> "TEST : hésitation entre plusieurs contacts. Réessayez avec une prononciation plus distincte."
-                "no_match" -> "TEST : aucun nom suffisamment proche. Aucun appel lancé."
-                "need_enrollment" -> "TEST : enregistrez au moins une prononciation valide pour chaque contact."
-                else -> "TEST : enregistrement audio invalide. Réessayez."
-            }
-            LocalVoiceMatcher.forget(file)
-            file.delete()
         }
     }
 
     private fun resolveConfirmation(file: File) {
-        val contact = matchedContact ?: return
+        val contact = matchedContact
+        if (contact == null) {
+            LocalVoiceMatcher.forget(file)
+            file.delete()
+            return
+        }
         lifecycleScope.launch {
-            status = "Vérification locale de votre réponse…"
-            val decision = withContext(Dispatchers.Default) {
-                LocalVoiceMatcher.classifyYesNo(file, responses)
-            }
-            when (decision) {
-                "yes" -> callContact(contact)
-                "no" -> {
-                    matchedContact = null
-                    status = "D'accord. Qui voulez-vous appeler ?"
-                    playPrompt(prompts.askWho)
+            try {
+                status = "Vérification locale de votre réponse…"
+                val decision = withContext(Dispatchers.Default) {
+                    LocalVoiceMatcher.classifyYesNo(file, responses)
                 }
-                else -> {
-                    status = if (responses.yesPaths.size < 2 || responses.noPaths.size < 2) {
-                        "Enregistrez plusieurs exemples de OUI et NON dans les réglages, ou utilisez les boutons."
-                    } else {
-                        "Je n'ai pas reconnu votre réponse. Utilisez les boutons OUI ou NON."
+                when (decision) {
+                    "yes" -> callContact(contact)
+                    "no" -> {
+                        matchedContact = null
+                        status = "D'accord. Qui voulez-vous appeler ?"
+                        playPrompt(prompts.askWho)
                     }
-                    playPrompt(prompts.repeat)
+                    else -> {
+                        status = if (responses.yesPaths.size < 2 || responses.noPaths.size < 2) {
+                            "Enregistrez plusieurs exemples de OUI et NON dans les réglages, ou utilisez les boutons OUI ou NON."
+                        } else {
+                            "Je n'ai pas reconnu votre réponse. Utilisez les boutons OUI ou NON."
+                        }
+                        playPrompt(prompts.repeat)
+                    }
                 }
+            } catch (_: Exception) {
+                status = "Erreur pendant la confirmation. Utilisez les boutons OUI ou NON."
+            } finally {
+                LocalVoiceMatcher.forget(file)
+                file.delete()
             }
         }
     }
@@ -474,6 +497,18 @@ class MainActivity : ComponentActivity() {
                 status = "Impossible d'ouvrir l'application Téléphone."
             }
         }
+    }
+
+    override fun onPause() {
+        if (::recorder.isInitialized && isRecording) {
+            try {
+                recorder.stop()?.let { it.delete() }
+            } catch (_: Exception) { }
+            isRecording = false
+            recordingTask = RecordingTask.NONE
+            status = "Enregistrement interrompu lorsque l'application a été quittée. Vous pouvez recommencer."
+        }
+        super.onPause()
     }
 
     override fun onDestroy() {
