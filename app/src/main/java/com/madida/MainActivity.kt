@@ -124,12 +124,12 @@ class MainActivity : ComponentActivity() {
                             recording = isRecording,
                             matchedContact = matchedContact,
                             onMainAction = {
-                                if (matchedContact == null) {
-                                    if (isRecording && recordingTask == RecordingTask.CALL_NAME) stopCurrentRecording()
-                                    else startRecording(RecordingTask.CALL_NAME)
+                                if (isRecording) {
+                                    stopCurrentRecording()
+                                } else if (matchedContact == null) {
+                                    startRecording(RecordingTask.CALL_NAME)
                                 } else {
-                                    if (isRecording && recordingTask == RecordingTask.CONFIRMATION) stopCurrentRecording()
-                                    else startRecording(RecordingTask.CONFIRMATION)
+                                    startRecording(RecordingTask.CONFIRMATION)
                                 }
                             },
                             onYes = { matchedContact?.let { callContact(it) } },
