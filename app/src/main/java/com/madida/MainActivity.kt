@@ -153,6 +153,10 @@ class MainActivity : ComponentActivity() {
                             onAddContact = { name, phone, aliases -> addContact(name, phone, aliases) },
                             onSelectContact = { selectedContactId = it },
                             onDeleteContact = { deleteContact(it) },
+                            onDeleteContactSample = { contactId, audioPath -> deleteContactSample(contactId, audioPath) },
+                            onDeleteContactAnnouncement = { deleteContactAnnouncement(it) },
+                            onDeleteResponseSample = { kind, audioPath -> deleteResponseSample(kind, audioPath) },
+                            onDeletePrompt = { deletePrompt(it) },
                             onRecordSample = {
                                 selectedContactId = it
                                 startRecording(RecordingTask.ENROLLMENT)
@@ -219,6 +223,67 @@ class MainActivity : ComponentActivity() {
                 candidate.delete()
             }
         } catch (_: Exception) { }
+    }
+
+    private fun deleteContactSample(contactId: String, audioPath: String) {
+        if (isRecording) return
+        val contact = contacts.firstOrNull { it.id == contactId } ?: return
+        if (audioPath !in contact.samplePaths) return
+
+        val updated = contact.copy(samplePaths = contact.samplePaths.filterNot { it == audioPath })
+        contacts = contacts.map { if (it.id == contactId) updated else it }
+        store.saveContacts(contacts)
+        removeAudioFile(audioPath)
+        status = "Prononciation supprimée. Il reste ${updated.samplePaths.size} exemple(s)."
+    }
+
+    private fun deleteContactAnnouncement(contactId: String) {
+        if (isRecording) return
+        val contact = contacts.firstOrNull { it.id == contactId } ?: return
+        val audioPath = contact.announcementPath ?: return
+        val updated = contact.copy(announcementPath = null)
+        contacts = contacts.map { if (it.id == contactId) updated else it }
+        store.saveContacts(contacts)
+        removeAudioFile(audioPath)
+        status = "Enregistrement du nom à annoncer supprimé."
+    }
+
+    private fun deleteResponseSample(kind: String, audioPath: String) {
+        if (isRecording) return
+        responses = when (kind) {
+            "yes" -> responses.copy(yesPaths = responses.yesPaths.filterNot { it == audioPath })
+            else -> responses.copy(noPaths = responses.noPaths.filterNot { it == audioPath })
+        }
+        store.saveResponses(responses)
+        removeAudioFile(audioPath)
+        status = "Enregistrement vocal supprimé."
+    }
+
+    private fun deletePrompt(key: String) {
+        if (isRecording) return
+        val oldPath = when (key) {
+            "askWho" -> prompts.askWho
+            "confirm" -> prompts.confirm
+            "repeat" -> prompts.repeat
+            else -> prompts.notFound
+        } ?: return
+
+        player.stop()
+        prompts = when (key) {
+            "askWho" -> prompts.copy(askWho = null)
+            "confirm" -> prompts.copy(confirm = null)
+            "repeat" -> prompts.copy(repeat = null)
+            else -> prompts.copy(notFound = null)
+        }
+        store.savePrompts(prompts)
+        removeAudioFile(oldPath)
+        status = "Audio d'instruction supprimé."
+    }
+
+    private fun removeAudioFile(path: String) {
+        val file = File(path)
+        LocalVoiceMatcher.forget(file)
+        deleteRecordingFile(file)
     }
 
     private fun addContact(name: String, phone: String, aliasesText: String) {
