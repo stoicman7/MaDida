@@ -31,7 +31,6 @@ internal object LocalVoiceMatcher {
     private const val DELTA_SCALE = 2.0
     private const val MAX_DISTANCE = 0.82
     private const val MIN_MARGIN = 0.10
-    private const val MIN_NAME_SAMPLES = 3
     private const val MAX_REFERENCES_PER_DECISION = 3
     private const val MAX_AUDIO_SECONDS = 10
 
@@ -60,9 +59,9 @@ internal object LocalVoiceMatcher {
             return ContactDecision(status = "need_enrollment")
         }
 
-        // Closed-set identification: every saved contact must have at least one usable
-        // enrollment sample, then the closest candidate always wins. We deliberately do not
-        // reject a candidate using an absolute distance or a minimum margin.
+        // Closed-set identification: compare every contact that has at least one usable
+        // enrollment sample. Unenrolled or damaged entries are skipped; the closest usable
+        // candidate always wins, without an absolute-distance or minimum-margin rejection.
         val scores = mutableListOf<Pair<FamilyContact, Double>>()
 
         for (contact in contacts) {
