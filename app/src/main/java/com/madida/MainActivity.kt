@@ -282,6 +282,7 @@ class MainActivity : ComponentActivity() {
 
     private fun removeAudioFile(path: String) {
         val file = File(path)
+        player.stop()
         LocalVoiceMatcher.forget(file)
         deleteRecordingFile(file)
     }
@@ -471,8 +472,10 @@ class MainActivity : ComponentActivity() {
                 }
                 val candidate = decision.contact ?: decision.bestCandidate
                 status = when (decision.status) {
-                    "match" -> "TEST : nom reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
-                    "need_enrollment" -> "TEST : enregistrez une prononciation pour au moins un contact."
+                    "match" -> "TEST : contact reconnu = ${candidate?.displayName}. Distance : ${"%.3f".format(java.util.Locale.US, decision.bestDistance ?: 0.0)}. Aucun appel lancé."
+                    "unknown_sound" -> "TEST : son rejeté, aucun contact proposé. Aucun appel lancé."
+                    "need_calibration" -> "TEST : il faut au moins trois exemples valides pour un contact."
+                    "need_enrollment" -> "TEST : enregistrez au moins un contact."
                     else -> "TEST : enregistrement audio invalide. Réessayez."
                 }
             } catch (_: Exception) {
